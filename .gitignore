@@ -1,2 +1,5 @@
 archive/*
 data/*
+__pycache__/*
+.ipynb_checkpoints/
+models/
