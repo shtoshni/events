@@ -8,6 +8,7 @@ import json
 from collections import defaultdict, OrderedDict
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+from transformers import get_linear_schedule_with_warmup
 
 from utils import action_sequences_to_clusters, classify_errors
 from litbank_utils.utils import load_data
@@ -28,9 +29,9 @@ class Experiment:
     def __init__(self, data_dir=None, conll_data_dir=None,
                  model_dir=None, best_model_dir=None,
                  # Model params
-                 batch_size=32, seed=0, init_lr=1e-3, max_gradient_norm=5.0,
+                 batch_size=32, seed=0, init_lr=1e-3, max_gradient_norm=1.0,
                  max_epochs=20, max_segment_len=128, eval=False, num_train_docs=None,
-                 mem_type=False,
+                 mem_type=False, span_type_wt=1.0,
                  no_singletons=False,
                  # Other params
                  slurm_id=None, conll_scorer=None, **kwargs):
@@ -48,6 +49,7 @@ class Experiment:
                               "dev": self.dev_examples,
                               "test": self.test_examples}
         self.cluster_threshold = (2 if no_singletons else 1)
+        self.span_type_wt = span_type_wt
 
         self.slurm_id = slurm_id
         self.conll_scorer = conll_scorer
@@ -70,7 +72,7 @@ class Experiment:
             self.model = LRUController(**kwargs).cuda()
         elif mem_type == 'unbounded':
             self.model = UnboundedMemController(**kwargs).cuda()
-        self.initialize_setup(init_lr=init_lr)
+        self.initialize_setup(init_lr=init_lr, max_epochs=max_epochs)
         utils.print_model_info(self.model)
         sys.stdout.flush()
 
@@ -81,14 +83,19 @@ class Experiment:
         # Finally evaluate model
         self.final_eval()
 
-    def initialize_setup(self, init_lr, lr_decay=10):
+    def initialize_setup(self, init_lr, max_epochs=10):
         """Initialize model and training info."""
         self.train_info = {}
-        self.optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=init_lr, eps=1e-6)
-        self.optim_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.1, patience=3,
-            min_lr=0.1 * init_lr, verbose=True)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(), lr=init_lr, eps=1e-6, weight_decay=1e-1)
+
+        total_training_steps = len(self.train_examples) * max_epochs
+        self.optim_scheduler = get_linear_schedule_with_warmup(
+            optimizer=self.optimizer, num_warmup_steps=0,
+            num_training_steps=total_training_steps)
+        # torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     self.optimizer, mode='min', factor=0.1, patience=3,
+        #     min_lr=0.01 * init_lr, verbose=True)
         self.train_info['epoch'] = 0
         self.train_info['val_perf'] = 0.0
         self.train_info['global_steps'] = 0
@@ -121,19 +128,35 @@ class Experiment:
             model.train()
             np.random.shuffle(self.train_examples)
             batch_loss = 0
+
+            # Span type
+            span_type_corr_agg = 0
+            span_type_total_agg = 0
+
             errors = OrderedDict([("WL", 0), ("FN", 0), ("WF", 0),
                                   ("WO", 0), ("FL", 0), ("C", 0)])
             for example in self.train_examples:
                 self.train_info['global_steps'] += 1
-                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = model(example)
+                (loss, pred_action_list, pred_mentions, gt_actions, gt_mentions,
+                    span_type_corr, span_type_total) = model(example)
+
+                span_type_corr_agg += span_type_corr
+                span_type_total_agg += span_type_total
+
                 batch_errors = classify_errors(pred_action_list, gt_actions)
                 for key in errors:
                     errors[key] += batch_errors[key]
 
+                loss['total'] = loss['coref'] + self.span_type_wt * loss['span_type']
                 total_loss = loss['total']
                 batch_loss += total_loss.item()
                 if not self.slurm_id:
                     writer.add_scalar("Loss/Total", total_loss, self.train_info['global_steps'])
+                    writer.add_scalar(
+                        "Loss/Coref", loss['coref'].item(), self.train_info['global_steps'])
+                    if 'span_type' in loss:
+                        writer.add_scalar("Loss/Span Type", loss['span_type'].item(),
+                                          self.train_info['global_steps'])
 
                 if torch.isnan(total_loss):
                     print("Loss is NaN")
@@ -155,9 +178,12 @@ class Experiment:
             # Update epochs done
             self.train_info['epoch'] = epoch + 1
 
+            # Span type accuracy
+            span_type_acc = span_type_corr_agg/span_type_total_agg
+
             # Evaluate auto regressive performance on dev set
             val_loss = self.eval_auto_reg()
-            scheduler.step(val_loss)
+            scheduler.step()
 
             # Dev performance
             fscore = self.eval_model()
@@ -176,9 +202,10 @@ class Experiment:
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
-            logging.info("Epoch: %d, F1: %.1f, Max F1: %.1f, Time: %.2f, Loss: %.3f, Val Loss: %.3f"
-                         % (epoch + 1, fscore, self.train_info['val_perf'], elapsed_time,
-                            batch_loss/len(self.train_examples), val_loss))
+            logging.info(
+                "Epoch: %d, F1: %.1f, Max F1: %.1f, Time: %.2f, Loss: %.3f, Val Loss: %.3f Span Type Acc: %.3f"
+                % (epoch + 1, fscore, self.train_info['val_perf'], elapsed_time,
+                   batch_loss/len(self.train_examples), val_loss, span_type_acc))
 
             sys.stdout.flush()
             if not self.slurm_id:
@@ -198,7 +225,8 @@ class Experiment:
         corr_actions, total_actions = 0, 0
         with torch.no_grad():
             for example in self.dev_examples:
-                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = model(example, teacher_forcing=True)
+                (loss, pred_action_list, pred_mentions, gt_actions, gt_mentions,
+                    span_type_corr, span_type_total) = model(example, teacher_forcing=True)
                 batch_errors = classify_errors(pred_action_list, gt_actions)
                 for key in errors:
                     errors[key] += batch_errors[key]
@@ -243,7 +271,7 @@ class Experiment:
                 oracle_evaluator = CorefEvaluator()
                 coref_predictions, subtoken_maps = {}, {}
                 for example in data_iter:
-                    loss, action_list, pred_mentions, gt_actions, gt_mentions = model(example)
+                    loss, action_list, pred_mentions, gt_actions, gt_mentions, span_type_corr, span_type_total = model(example)
                     for pred_action, gt_action in zip(action_list, gt_actions):
                         pred_class_counter[pred_action[1]] += 1
                         gt_class_counter[gt_action[1]] += 1

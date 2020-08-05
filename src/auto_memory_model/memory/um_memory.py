@@ -1,10 +1,17 @@
 import torch
+import torch.nn as nn
 from auto_memory_model.memory.base_fixed_memory import BaseMemory
-
+import math
 
 class UnboundedMemory(BaseMemory):
     def __init__(self, **kwargs):
         super(UnboundedMemory, self).__init__(**kwargs)
+
+        # self.query_projector = nn.Linear(self.hsize + self.mem_size + 4 * self.emb_size, self.mem_size)
+        # self.query_transform = nn.Linear(self.hsize, self.mem_size)
+        # self.mem_key_transform = nn.Linear(self.mem_size, self.mem_size)
+        # self.mem_val_transform = nn.Linear(self.mem_size, self.mem_size)
+
 
     def initialize_memory(self):
         """Initialize the memory to null with only 1 memory cell to begin with."""
@@ -24,6 +31,16 @@ class UnboundedMemory(BaseMemory):
 
         return coref_new_scores
 
+    def get_memory_context(self, cur_mention, mem):
+        query_vec = self.query_transform(cur_mention)
+        key_mat = self.mem_key_transform(mem)
+        val_mat = self.mem_val_transform(mem)
+
+        const = math.sqrt(val_mat.shape[1])
+        sim_scores = torch.nn.functional.softmax(torch.mv(key_mat, query_vec)/const, dim=0)
+        context_vec = torch.mv(torch.transpose(val_mat, 1, 0), sim_scores)
+        return context_vec
+
     def forward(self, doc_type, mention_emb_list, actions, mentions,
                 teacher_forcing=False):
         # Initialize memory
@@ -35,23 +52,40 @@ class UnboundedMemory(BaseMemory):
 
         action_logit_list = []
         action_list = []  # argmax actions
+
+        span_type_logit_list = []
+        span_type_list = []
         action_str = '<s>'
 
-        for ment_idx, (ment_emb, (span_start, span_end, ment_type), (gt_cell_idx, gt_action_str)) in \
+        for ment_idx, (ment_emb, (span_start, span_end, ment_type, span_type), (gt_cell_idx, gt_action_str)) in \
                 enumerate(zip(mention_emb_list, mentions, actions)):
             # Doc type embedding
             doc_type_idx = self.doc_type_to_idx[doc_type]
             doc_type_emb = self.doc_type_emb(torch.tensor(doc_type_idx).long().cuda())
             # Embed the mention type
             ment_type_emb = self.ment_type_emb(torch.tensor(ment_type).long().cuda())
+
+
             # Embed the width embedding
             width_bucket = self.get_mention_width_bucket(span_end - span_start)
             width_embedding = self.width_embeddings(torch.tensor(width_bucket).long().cuda())
             # Last action embedding
             last_action_emb = self.get_last_action_emb(action_str)
+
+            # Context vector
+            # context_vec = self.get_memory_context(ment_emb, mem_vectors)
+
+            # query_vector = self.query_projector(
+            #     torch.cat([ment_emb, doc_type_emb, ment_type_emb,
+            #                width_embedding, last_action_emb, context_vec], dim=0))
             query_vector = self.query_projector(
                 torch.cat([ment_emb, doc_type_emb, ment_type_emb,
                            width_embedding, last_action_emb], dim=0))
+
+            span_type_logits = self.span_type_mlp(
+                torch.cat([ment_emb, doc_type_emb, width_embedding, last_action_emb], dim=0))
+            span_type_logit_list.append(span_type_logits)
+            span_type_list.append(span_type)
 
             coref_new_scores = self.predict_action(
                 query_vector, mem_vectors, last_ment_vectors,
@@ -132,4 +166,4 @@ class UnboundedMemory(BaseMemory):
                     ent_counter = torch.cat([ent_counter, torch.tensor([1.0]).cuda()], dim=0)
                     last_mention_idx = torch.cat([last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
 
-        return action_logit_list, action_list
+        return (action_logit_list, action_list, span_type_logit_list, span_type_list)

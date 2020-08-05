@@ -67,6 +67,17 @@ class UnboundedMemController(BaseController):
 
         return coref_loss
 
+    def calculate_span_type_loss(self, span_type_logit_list, span_type_list):
+        span_type_logit_tensor = torch.stack(span_type_logit_list)
+        span_type_tensor = torch.tensor(span_type_list).cuda()
+
+        span_type_pred = torch.argmax(span_type_logit_tensor, dim=1)
+        span_type_corr = torch.sum(span_type_pred == span_type_tensor).item()
+
+        span_type_loss = torch.nn.functional.cross_entropy(
+            input=span_type_logit_tensor, target=span_type_tensor)
+        return span_type_loss, span_type_corr
+
     def forward(self, example, teacher_forcing=False):
         """
         Encode a batch of excerpts.
@@ -75,16 +86,21 @@ class UnboundedMemController(BaseController):
             self.get_mention_embs_and_actions(example)
 
         doc_type = example["doc_key"].split("/")[0]
-        action_prob_list, action_list = self.memory_net(
+        action_prob_list, action_list, span_type_logit_list, span_type_list = self.memory_net(
             doc_type, mention_emb_list, gt_actions, pred_mentions,
             teacher_forcing=teacher_forcing)  # , example[""])
 
-        coref_loss = 0.0
+        span_type_loss, span_type_corr = self.calculate_span_type_loss(
+            span_type_logit_list, span_type_list)
+        span_type_total = len(span_type_list)
+
+        loss = {}
+        loss['span_type'] = span_type_loss
         if self.training or teacher_forcing:
-            loss = {}
             coref_loss = self.calculate_coref_loss(action_prob_list, gt_actions)
             loss['coref'] = coref_loss/len(mention_emb_list)
-            loss['total'] = loss['coref']
-            return loss, action_list, pred_mentions, gt_actions, gt_mentions
+            return (loss, action_list, pred_mentions, gt_actions, gt_mentions,
+                    span_type_corr, span_type_total)
         else:
-            return coref_loss, action_list, pred_mentions, gt_actions, gt_mentions
+            return (loss, action_list, pred_mentions, gt_actions, gt_mentions,
+                    span_type_corr, span_type_total)

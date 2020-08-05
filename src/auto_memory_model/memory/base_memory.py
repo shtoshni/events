@@ -7,7 +7,7 @@ LOG2 = math.log(2)
 
 
 class BaseMemory(nn.Module):
-    def __init__(self, hsize=300, mlp_size=200, mlp_depth=1, coref_mlp_depth=1,
+    def __init__(self, hsize=300, mlp_size=200, mlp_depth=1,
                  mem_size=None, drop_module=None, emb_size=20, entity_rep='max',
                  use_last_mention=False,
                  **kwargs):
@@ -23,7 +23,7 @@ class BaseMemory(nn.Module):
         self.drop_module = drop_module
 
         self.action_str_to_idx = {'c': 0, 'o': 1, 'i': 2, '<s>': 3}
-        self.action_idx_to_str = ['c', 'o', 'i']
+        self.action_idx_to_str = ['c', 'o', 'i', '<s>']
 
         self.doc_type_to_idx = {'deft': 0, 'pilot': 1, 'proxy': 2}
 
@@ -42,16 +42,20 @@ class BaseMemory(nn.Module):
         self.query_projector = nn.Linear(self.hsize + 4 * self.emb_size, self.mem_size)
 
         self.mem_coref_mlp = MLP(3 * self.mem_size + 2 * self.emb_size, self.mlp_size, 1,
-                                 num_hidden_layers=coref_mlp_depth, bias=True, drop_module=drop_module)
+                                 num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
         if self.use_last_mention:
             self.ment_coref_mlp = MLP(3 * self.mem_size, self.mlp_size, 1,
                                       num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
-        self.ment_type_emb = nn.Embedding(2, self.emb_size)
+        self.ment_type_emb = nn.Embedding(3, self.emb_size)
         self.doc_type_emb = nn.Embedding(3, self.emb_size)
         self.last_action_emb = nn.Embedding(4, self.emb_size)
         self.distance_embeddings = nn.Embedding(11, self.emb_size)
         self.width_embeddings = nn.Embedding(30, self.emb_size)
         self.counter_embeddings = nn.Embedding(11, self.emb_size)
+
+        # Predict span type
+        self.span_type_mlp = MLP(self.hsize + 3 * self.emb_size, self.mlp_size, 3,
+                                 num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
 
     @staticmethod
     def get_distance_bucket(distances):

@@ -65,7 +65,7 @@ class BaseController(nn.Module):
         pred_mentions = gt_mentions
         gt_actions = self.get_actions(pred_mentions, example["clusters"])
 
-        cand_starts, cand_ends, ent_type = zip(*pred_mentions)
+        cand_starts, cand_ends, *_ = zip(*pred_mentions)
         mention_embs = self.get_mention_embeddings(
             encoded_output, torch.tensor(cand_starts).cuda(), torch.tensor(cand_ends).cuda())
         mention_emb_list = torch.unbind(mention_embs, dim=0)

@@ -13,7 +13,7 @@ from data_processing.utils import get_ent_info, get_clusters_from_xml
 
 
 BERT_RE = re.compile(r'## *')
-ELEM_TYPE_TO_IDX = {'ENTITY': 0, 'EVENT': 1}
+ELEM_TYPE_TO_IDX = {'ENTITY': 0, 'EVENT': 1, 'BOTH': 2}
 
 
 class DocumentState(object):
@@ -30,14 +30,35 @@ class DocumentState(object):
         self.sentence_map = []
         self.segment_info = []
 
+
+    def get_span_to_type(self, ent_id_to_info):
+        span_to_type = {}
+        for ent_id in ent_id_to_info:
+            span_start, span_end, ent_type = ent_id_to_info[ent_id]
+            span_ends = tuple([span_start, span_end])
+
+            # print(span_ends)
+            if span_ends in span_to_type:
+                span_to_type[span_ends] = ELEM_TYPE_TO_IDX['BOTH']#, ELEM_TYPE_TO_IDX[ent_type])
+                # import sys
+                # sys.exit()
+            else:
+                span_to_type[span_ends] = ELEM_TYPE_TO_IDX[ent_type]
+
+        return span_to_type
+
     def finalize(self, clusters, ent_id_to_info):
+        span_to_type = self.get_span_to_type(ent_id_to_info)
+
         # populate clusters
         self.clusters = []
         for cluster in clusters:
             cur_cluster = []
             for ent_id in cluster:
-                cur_cluster.append((ent_id_to_info[ent_id][0], ent_id_to_info[ent_id][1],
-                                    ELEM_TYPE_TO_IDX[ent_id_to_info[ent_id][2]]))
+                span_start, span_end, ent_type = ent_id_to_info[ent_id]
+                span_ends = tuple([span_start, span_end])
+                span_type = span_to_type[span_ends]
+                cur_cluster.append((span_start, span_end, ELEM_TYPE_TO_IDX[ent_type], span_type))
             self.clusters.append(cur_cluster)
 
         all_mentions = flatten(self.clusters)

@@ -33,6 +33,8 @@ def main():
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
+    parser.add_argument('-ment_classes', default='three_way', type=str,
+                        choices=['three_way', 'two_way'], help='BERT model type')
     parser.add_argument('-pretrained_bert_dir', default=None, type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
@@ -54,8 +56,6 @@ def main():
                         help='Memory size used in the model')
     parser.add_argument('-mlp_size', default=1024, type=int,
                         help='MLP size used in the model')
-    parser.add_argument('-coref_mlp_depth', default=1, type=int,
-                        help='Number of hidden layers in Coref MLP')
     parser.add_argument('-mlp_depth', default=1, type=int,
                         help='Number of hidden layers in other MLPs')
     parser.add_argument('-entity_rep', default='avg', type=str,
@@ -73,6 +73,8 @@ def main():
                         default=1.0, type=float)
     parser.add_argument('-over_loss_wt', help='Weight of overwrite loss',
                         default=1.0, type=float)
+    parser.add_argument('-span_type_wt', help='Weight of span type loss',
+                        default=1.0, type=float)
     parser.add_argument('-num_train_docs', default=None, type=int,
                         help='Number of training docs.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
@@ -84,7 +86,7 @@ def main():
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
     parser.add_argument('-no_singletons', help="No singletons.",
-                        default=False, action="store_true")
+                        default=True, action="store_true")
     parser.add_argument('-eval', help="Evaluate model",
                         default=False, action="store_true")
     parser.add_argument('-slurm_id', help="Slurm ID",
@@ -97,9 +99,10 @@ def main():
     # Only include important options in hash computation
     imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # Encoder params
                 'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
-                'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
+                'emb_size', 'use_last_mention',  # Memory params
                 'max_epochs', 'dropout_rate', 'batch_size', 'seed', 'init_lr',
-                'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt",  # Training params
+                'ment_classes', 'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt",
+                'span_type_wt', # Training params
                 ]
     for key, val in vars(args).items():
         if key in imp_opts:
@@ -118,7 +121,8 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_enc}')
+    args.data_dir = path.join(args.base_data_dir,
+                              f'{args.dataset}/{args.ment_classes}/{args.doc_enc}')
     print(args.data_dir)
     # Log directory for Tensorflow Summary
     log_dir = path.join(model_dir, "logs")
