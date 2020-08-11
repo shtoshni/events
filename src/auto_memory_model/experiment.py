@@ -10,8 +10,9 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 
-from utils import action_sequences_to_clusters, classify_errors
-from litbank_utils.utils import load_data
+from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
+from red_utils.utils import load_data
+from red_utils.constants import IDX_TO_ELEM_TYPE
 from coref_utils.conll import evaluate_conll
 from coref_utils.utils import mention_to_cluster
 from coref_utils.metrics import CorefEvaluator
@@ -87,11 +88,14 @@ class Experiment:
         """Initialize model and training info."""
         self.train_info = {}
         self.optimizer = torch.optim.AdamW(
-            self.model.parameters(), lr=init_lr, eps=1e-6, weight_decay=1e-1)
+            self.model.parameters(), lr=init_lr, eps=1e-6, weight_decay=1e-2)
 
         total_training_steps = len(self.train_examples) * max_epochs
+        print(total_training_steps)
+        num_warmup_steps = 0  # total_training_steps // 10
+
         self.optim_scheduler = get_linear_schedule_with_warmup(
-            optimizer=self.optimizer, num_warmup_steps=0,
+            optimizer=self.optimizer, num_warmup_steps=num_warmup_steps,
             num_training_steps=total_training_steps)
         # torch.optim.lr_scheduler.ReduceLROnPlateau(
         #     self.optimizer, mode='min', factor=0.1, patience=3,
@@ -129,19 +133,12 @@ class Experiment:
             np.random.shuffle(self.train_examples)
             batch_loss = 0
 
-            # Span type
-            span_type_corr_agg = 0
-            span_type_total_agg = 0
-
             errors = OrderedDict([("WL", 0), ("FN", 0), ("WF", 0),
                                   ("WO", 0), ("FL", 0), ("C", 0)])
             for example in self.train_examples:
                 self.train_info['global_steps'] += 1
                 (loss, pred_action_list, pred_mentions, gt_actions, gt_mentions,
                     span_type_corr, span_type_total) = model(example)
-
-                span_type_corr_agg += span_type_corr
-                span_type_total_agg += span_type_total
 
                 batch_errors = classify_errors(pred_action_list, gt_actions)
                 for key in errors:
@@ -178,11 +175,8 @@ class Experiment:
             # Update epochs done
             self.train_info['epoch'] = epoch + 1
 
-            # Span type accuracy
-            span_type_acc = span_type_corr_agg/span_type_total_agg
-
             # Evaluate auto regressive performance on dev set
-            val_loss = self.eval_auto_reg()
+            val_loss, span_type_acc = self.eval_auto_reg()
             scheduler.step()
 
             # Dev performance
@@ -215,7 +209,7 @@ class Experiment:
                 return
 
     def eval_auto_reg(self):
-        """Train model"""
+        """Evaluate teacher-forced model"""
         model = self.model
         model.eval()
         errors = OrderedDict([("WL", 0), ("FN", 0), ("WF", 0),
@@ -223,10 +217,18 @@ class Experiment:
         batch_loss = 0
         pred_class_counter, gt_class_counter = defaultdict(int), defaultdict(int)
         corr_actions, total_actions = 0, 0
+        # Span type
+        span_type_corr_agg = 0
+        span_type_total_agg = 0
+
         with torch.no_grad():
             for example in self.dev_examples:
                 (loss, pred_action_list, pred_mentions, gt_actions, gt_mentions,
                     span_type_corr, span_type_total) = model(example, teacher_forcing=True)
+
+                span_type_corr_agg += span_type_corr
+                span_type_total_agg += span_type_total
+
                 batch_errors = classify_errors(pred_action_list, gt_actions)
                 for key in errors:
                     errors[key] += batch_errors[key]
@@ -242,11 +244,14 @@ class Experiment:
                 total_loss = loss['coref']
                 batch_loss += total_loss.item()
 
+        # Span type accuracy
+        span_type_acc = span_type_corr_agg/span_type_total_agg
+
         # logging.info("Val loss: %.3f" % batch_loss)
         logging.info("Dev: %s", str(errors))
         logging.info("(Teacher forced) Action accuracy: %.3f", corr_actions/total_actions)
         model.train()
-        return batch_loss/len(self.dev_examples)
+        return batch_loss/len(self.dev_examples), span_type_acc
 
     def eval_model(self, split='dev'):
         """Eval model"""
@@ -271,7 +276,8 @@ class Experiment:
                 oracle_evaluator = CorefEvaluator()
                 coref_predictions, subtoken_maps = {}, {}
                 for example in data_iter:
-                    loss, action_list, pred_mentions, gt_actions, gt_mentions, span_type_corr, span_type_total = model(example)
+                    (loss, action_list, pred_mentions, gt_actions, gt_mentions, span_type_corr,
+                        span_type_total, span_type_errors) = model(example)
                     for pred_action, gt_action in zip(action_list, gt_actions):
                         pred_class_counter[pred_action[1]] += 1
                         gt_class_counter[gt_action[1]] += 1
@@ -302,10 +308,24 @@ class Experiment:
                     oracle_evaluator.update(oracle_clusters, gold_clusters,
                                             mention_to_oracle, mention_to_gold)
 
+                    doc = []
+                    for sentence in example["sentences"]:
+                        doc.extend(sentence)
+
+                    tokenizer = self.model.doc_encoder.tokenizer
+                    span_error_strings = []
+                    for (span_start, span_end), gt_type, pred_type in span_type_errors:
+                        span_str = tokenizer.convert_tokens_to_string(doc[span_start: span_end + 1])
+                        span_error_strings.append(
+                            (span_str, IDX_TO_ELEM_TYPE[gt_type], IDX_TO_ELEM_TYPE[pred_type]))
+
                     log_example = dict(example)
+                    del log_example["subtoken_map"]
+                    del log_example["sentence_map"]
                     log_example["gt_actions"] = gt_actions
                     log_example["pred_actions"] = action_list
                     log_example["predicted_clusters"] = predicted_clusters
+                    log_example["span_errors"] = span_error_strings
 
                     f.write(json.dumps(log_example) + "\n")
 

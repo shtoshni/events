@@ -14,7 +14,7 @@ def get_ordered_mentions(clusters):
         all_mentions.extend(cluster)
 
     # Span start is the main criteria, and span end is used to break ties
-    all_mentions = sorted(all_mentions, key=lambda x: x[0] + 1e-5 * x[1])
+    all_mentions = sorted(all_mentions, key=lambda x: x[0] + 1e-5 * x[1] + 1e-5 * x[2])
     all_mentions = [tuple(mention) for mention in all_mentions]
     return all_mentions
 

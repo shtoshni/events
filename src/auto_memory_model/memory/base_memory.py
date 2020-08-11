@@ -39,14 +39,14 @@ class BaseMemory(nn.Module):
                 hidden_size=self.mem_size)
 
         # CHANGE THIS PART
-        self.query_projector = nn.Linear(self.hsize + 4 * self.emb_size, self.mem_size)
+        self.query_projector = nn.Linear(self.hsize + 3 * self.emb_size, self.mem_size)
 
         self.mem_coref_mlp = MLP(3 * self.mem_size + 2 * self.emb_size, self.mlp_size, 1,
                                  num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
         if self.use_last_mention:
             self.ment_coref_mlp = MLP(3 * self.mem_size, self.mlp_size, 1,
                                       num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
-        self.ment_type_emb = nn.Embedding(3, self.emb_size)
+        self.ment_type_emb = nn.Embedding(2, self.emb_size)
         self.doc_type_emb = nn.Embedding(3, self.emb_size)
         self.last_action_emb = nn.Embedding(4, self.emb_size)
         self.distance_embeddings = nn.Embedding(11, self.emb_size)
@@ -54,8 +54,9 @@ class BaseMemory(nn.Module):
         self.counter_embeddings = nn.Embedding(11, self.emb_size)
 
         # Predict span type
-        self.span_type_mlp = MLP(self.hsize + 3 * self.emb_size, self.mlp_size, 3,
-                                 num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
+        # self.span_type_mlp = MLP(self.mem_size + 2 * self.emb_size, self.mlp_size, 3,
+        #                          num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
+        self.span_type_mlp = nn.Linear(self.mem_size + 2 * self.emb_size, 3)
 
     @staticmethod
     def get_distance_bucket(distances):
@@ -94,11 +95,15 @@ class BaseMemory(nn.Module):
         return self.last_action_emb(torch.tensor(action_emb).cuda())
 
     @staticmethod
-    def get_coref_mask(ent_counter):
-        cell_mask = (ent_counter > 0.0).float().cuda()
+    def get_coref_mask(ent_counter, ment_type, ent_type):
+        counter_mask = (ent_counter > 0.0).float().cuda()
+        type_mask = torch.ones_like(counter_mask)
+        # type_mask = (torch.tensor(ment_type).cuda() == ent_type).float().cuda()
+        # print(type_mask, ent_type, ment_type)
+        cell_mask = counter_mask * type_mask
         return cell_mask
 
-    def get_coref_new_log_prob(self, query_vector, mem_vectors, last_ment_vectors,
+    def get_coref_new_log_prob(self, query_vector, ment_type, mem_vectors, ent_type, last_ment_vectors,
                                ent_counter, distance_embs, counter_embs):
         # Repeat the query vector for comparison against all cells
         num_cells = mem_vectors.shape[0]
@@ -117,11 +122,13 @@ class BaseMemory(nn.Module):
             last_ment_score = torch.squeeze(self.ment_coref_mlp(last_ment_vec), dim=-1)
             coref_score = coref_score + last_ment_score  # M
 
-        coref_new_mask = torch.cat([self.get_coref_mask(ent_counter), torch.tensor([1.0]).cuda()], dim=0)
+        coref_new_mask = torch.cat([
+            self.get_coref_mask(ent_counter, ment_type, ent_type), torch.tensor([1.0]).cuda()], dim=0)
         coref_new_scores = torch.cat(([coref_score, torch.tensor([0.0]).cuda()]), dim=0)
 
         coref_new_scores = coref_new_scores * coref_new_mask + (1 - coref_new_mask) * (-1e4)
         coref_new_log_prob = torch.nn.functional.log_softmax(coref_new_scores, dim=0)
+        # print(coref_new_mask, coref_new_log_prob)
         return coref_new_scores, coref_new_log_prob
 
     def forward(self, mention_emb_list, actions, mentions, teacher_forcing=False):

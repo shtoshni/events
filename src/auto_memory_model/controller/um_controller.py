@@ -67,16 +67,23 @@ class UnboundedMemController(BaseController):
 
         return coref_loss
 
-    def calculate_span_type_loss(self, span_type_logit_list, span_type_list):
+    def calculate_span_type_loss(self, span_type_logit_list, pred_span_type_list,
+                                 gt_span_type_list):
         span_type_logit_tensor = torch.stack(span_type_logit_list)
-        span_type_tensor = torch.tensor(span_type_list).cuda()
+        _, gt_span_type_vals = zip(*gt_span_type_list)
+        span_type_tensor = torch.tensor(gt_span_type_vals).cuda()
 
-        span_type_pred = torch.argmax(span_type_logit_tensor, dim=1)
-        span_type_corr = torch.sum(span_type_pred == span_type_tensor).item()
+        span_type_errors = []
+        span_type_corr = 0
+        for (pred_span_type, gt_span_type) in zip(pred_span_type_list, gt_span_type_list):
+            if pred_span_type[1] == gt_span_type[1]:
+                span_type_corr += 1
+            else:
+                span_type_errors.append((gt_span_type[0], gt_span_type[1], pred_span_type[1]))
 
         span_type_loss = torch.nn.functional.cross_entropy(
             input=span_type_logit_tensor, target=span_type_tensor)
-        return span_type_loss, span_type_corr
+        return span_type_loss, span_type_corr, span_type_errors
 
     def forward(self, example, teacher_forcing=False):
         """
@@ -85,14 +92,17 @@ class UnboundedMemController(BaseController):
         gt_mentions, pred_mentions, gt_actions, mention_emb_list =\
             self.get_mention_embs_and_actions(example)
 
+        # print(len(gt_mentions), len(gt_actions), len(pred_mentions))
+
         doc_type = example["doc_key"].split("/")[0]
-        action_prob_list, action_list, span_type_logit_list, span_type_list = self.memory_net(
+        # print(example["doc_key"])
+        action_prob_list, action_list, span_type_logit_list, pred_span_type_list, gt_span_type_list = self.memory_net(
             doc_type, mention_emb_list, gt_actions, pred_mentions,
             teacher_forcing=teacher_forcing)  # , example[""])
 
-        span_type_loss, span_type_corr = self.calculate_span_type_loss(
-            span_type_logit_list, span_type_list)
-        span_type_total = len(span_type_list)
+        span_type_loss, span_type_corr, span_type_errors = self.calculate_span_type_loss(
+            span_type_logit_list, pred_span_type_list, gt_span_type_list)
+        span_type_total = len(gt_span_type_list)
 
         loss = {}
         loss['span_type'] = span_type_loss
@@ -103,4 +113,4 @@ class UnboundedMemController(BaseController):
                     span_type_corr, span_type_total)
         else:
             return (loss, action_list, pred_mentions, gt_actions, gt_mentions,
-                    span_type_corr, span_type_total)
+                    span_type_corr, span_type_total, span_type_errors)

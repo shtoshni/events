@@ -3,6 +3,7 @@ import re
 import sys
 import json
 import collections
+import truecase
 from collections import defaultdict, OrderedDict
 import xml
 import xml.etree.ElementTree as ET
@@ -10,10 +11,10 @@ import xml.etree.ElementTree as ET
 from os import path
 from transformers import BertTokenizer
 from data_processing.utils import get_ent_info, get_clusters_from_xml
+from red_utils.constants import ELEM_TYPE_TO_IDX
 
 
 BERT_RE = re.compile(r'## *')
-ELEM_TYPE_TO_IDX = {'ENTITY': 0, 'EVENT': 1, 'BOTH': 2}
 
 
 class DocumentState(object):
@@ -29,29 +30,26 @@ class DocumentState(object):
         self.segment_subtoken_map = []
         self.sentence_map = []
         self.segment_info = []
+        self.clusters = []
 
-
-    def get_span_to_type(self, ent_id_to_info):
+    def get_span_to_type(self, ent_id_to_info, clusters):
         span_to_type = {}
-        for ent_id in ent_id_to_info:
-            span_start, span_end, ent_type = ent_id_to_info[ent_id]
-            span_ends = tuple([span_start, span_end])
+        for cluster in clusters:
+            for ent_id in cluster:
+                span_start, span_end, ent_type = ent_id_to_info[ent_id]
+                span_ends = tuple([span_start, span_end])
 
-            # print(span_ends)
-            if span_ends in span_to_type:
-                span_to_type[span_ends] = ELEM_TYPE_TO_IDX['BOTH']#, ELEM_TYPE_TO_IDX[ent_type])
-                # import sys
-                # sys.exit()
-            else:
-                span_to_type[span_ends] = ELEM_TYPE_TO_IDX[ent_type]
+                if span_ends in span_to_type:
+                    span_to_type[span_ends] = ELEM_TYPE_TO_IDX['BOTH']#, ELEM_TYPE_TO_IDX[ent_type])
+                else:
+                    span_to_type[span_ends] = ELEM_TYPE_TO_IDX[ent_type]
 
         return span_to_type
 
     def finalize(self, clusters, ent_id_to_info):
-        span_to_type = self.get_span_to_type(ent_id_to_info)
+        span_to_type = self.get_span_to_type(ent_id_to_info, clusters)
 
         # populate clusters
-        self.clusters = []
         for cluster in clusters:
             cur_cluster = []
             for ent_id in cluster:
@@ -146,9 +144,22 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len)
     return document
 
 
-def tokenize_doc(tokenizer, source_file, annotation_file):
+def tokenize_span(span, doc_name, tokenizer):
+    if "proxy/" in doc_name:
+        span = truecase.get_true_case(span)
+    return tokenizer.tokenize(span)
+
+
+def tokenize_doc(doc_name, tokenizer, source_file, annotation_file):
     # Read the source document
+    # orig_doc_str = "".join(open(source_file).readlines())
     doc_str = "".join(open(source_file).readlines())
+    orig_doc_str = doc_str
+    # if "proxy/" in doc_name:
+    #     doc_str = truecase.get_true_case(orig_doc_str)
+    #     print(len(open(source_file).readlines()))
+    # print(len(orig_doc_str), len(doc_str))
+    # assert(len(orig_doc_str) == len(doc_str))
 
     # Parse the XML
     tree = ET.parse(annotation_file)
@@ -169,12 +180,12 @@ def tokenize_doc(tokenizer, source_file, annotation_file):
         real_span = tuple([span_start, span_end])
         if real_span not in real_span_to_tokenized_span:
             before_span_str = doc_str[char_offset: span_start]
-            before_span_tokens = tokenizer.tokenize(before_span_str)
+            before_span_tokens = tokenize_span(before_span_str, doc_name, tokenizer)
             tokenized_doc.extend(before_span_tokens)
             token_counter += len(before_span_tokens)
 
             # Tokenize the span
-            span_tokens = tokenizer.tokenize(doc_str[span_start: span_end])
+            span_tokens = tokenize_span(doc_str[span_start: span_end], doc_name, tokenizer)
             ent_id_to_info[ent_id] = tuple([
                 token_counter, token_counter + len(span_tokens) - 1, ent_type])
             real_span_to_tokenized_span[real_span] = tuple(
@@ -189,7 +200,7 @@ def tokenize_doc(tokenizer, source_file, annotation_file):
 
     # Add the tokens after the last span
     rem_doc = doc_str[char_offset:]
-    rem_tokens = tokenizer.tokenize(rem_doc)
+    rem_tokens = tokenize_span(rem_doc, doc_name, tokenizer)
     token_counter += len(rem_tokens)
 
     tokenized_doc.extend(rem_tokens)
@@ -211,10 +222,10 @@ def minimize_partition(split, tokenizer,
 
     print("Minimizing {}".format(split))
     with open(output_path, "w") as output_file:
-        for filename, source_file, annotation_file in \
+        for doc_name, source_file, annotation_file in \
                 zip(split_files, source_files, annotation_files):
-            tokenized_doc, ent_id_to_info, clusters = tokenize_doc(tokenizer, source_file, annotation_file)
-            document = get_document(filename, tokenized_doc, clusters, ent_id_to_info, seg_len)
+            tokenized_doc, ent_id_to_info, clusters = tokenize_doc(doc_name, tokenizer, source_file, annotation_file)
+            document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len)
             output_file.write(json.dumps(document))
             output_file.write("\n")
             count += 1
@@ -241,5 +252,5 @@ if __name__ == "__main__":
     output_dir = sys.argv[2]
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
-    for seg_len in [128, 256, 384, 512]:
+    for seg_len in [512]:#[128, 256, 384, 512]:
         minimize_split(source_dir, ann_dir, doc_dir, seg_len, output_dir)

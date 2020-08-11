@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from collections import OrderedDict
 
 from pytorch_utils.utils import get_sequence_mask, get_span_mask
 from document_encoder.independent import IndependentDocEncoder
@@ -62,6 +63,11 @@ class BaseController(nn.Module):
         encoded_output = self.doc_encoder(example)
 
         gt_mentions = get_ordered_mentions(example["clusters"])
+        _, _, _, span_types = zip(*gt_mentions)
+        if 2 in span_types:
+            pass
+            # print(gt_mentions)
+
         pred_mentions = gt_mentions
         gt_actions = self.get_actions(pred_mentions, example["clusters"])
 
@@ -70,6 +76,13 @@ class BaseController(nn.Module):
             encoded_output, torch.tensor(cand_starts).cuda(), torch.tensor(cand_ends).cuda())
         mention_emb_list = torch.unbind(mention_embs, dim=0)
         return gt_mentions, pred_mentions, gt_actions, mention_emb_list
+
+    def get_unique_spans(self, mentions):
+        unique_spans = OrderedDict()
+        for span_start, span_end, ment_type, span_type in mentions:
+            unique_spans[(span_start, span_end, span_type)] = ment_type
+
+        return list(unique_spans.keys())
 
     def forward(self, example, teacher_forcing=False):
         pass
