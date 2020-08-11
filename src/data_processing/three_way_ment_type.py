@@ -252,5 +252,5 @@ if __name__ == "__main__":
     output_dir = sys.argv[2]
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
-    for seg_len in [512]:#[128, 256, 384, 512]:
+    for seg_len in [128, 256, 384, 512]:
         minimize_split(source_dir, ann_dir, doc_dir, seg_len, output_dir)
