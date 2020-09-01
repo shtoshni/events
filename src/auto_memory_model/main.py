@@ -6,7 +6,7 @@ import logging
 import subprocess
 from collections import OrderedDict
 
-from experiment import Experiment
+from auto_memory_model.experiment import Experiment
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
@@ -43,6 +43,9 @@ def main():
                         help='Max span width.')
     parser.add_argument('-ment_emb', default='endpoint', choices=['attn', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
+    parser.add_argument('-focus_group', default='joint', choices=['joint', 'entity', 'event'], type=str,
+                        help='Mentions in focus. If both, the cluster all mentions, otherwise cluster particular type'
+                             ' of mentions.')
 
     # Memory variables
     parser.add_argument('-mem_type', default='unbounded',
@@ -99,6 +102,7 @@ def main():
                 'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
                 'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
                 'max_epochs', 'dropout_rate', 'batch_size', 'seed', 'init_lr',
+                'focus_group',  # Mentions of particular focus
                 'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt",  # Training params
                 ]
     for key, val in vars(args).items():

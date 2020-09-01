@@ -90,12 +90,16 @@ class BaseMemory(nn.Module):
         return self.last_action_emb(torch.tensor(action_emb).cuda())
 
     @staticmethod
-    def get_coref_mask(ent_counter):
-        cell_mask = (ent_counter > 0.0).float().cuda()
+    def get_coref_mask(ent_counter, ment_type, cluster_type):
+        counter_mask = (ent_counter > 0.0).float().cuda()
+        # type_mask = torch.ones_like(counter_mask)
+        type_mask = (torch.tensor(ment_type).cuda() == cluster_type).float().cuda()
+        # print(type_mask, ent_type, ment_type)
+        cell_mask = counter_mask * type_mask
         return cell_mask
 
-    def get_coref_new_log_prob(self, query_vector, mem_vectors, last_ment_vectors,
-                               ent_counter, distance_embs, counter_embs):
+    def get_coref_new_log_prob(self, query_vector, ment_type, mem_vectors, cluster_type,
+                               last_ment_vectors, ent_counter, distance_embs, counter_embs):
         # Repeat the query vector for comparison against all cells
         num_cells = mem_vectors.shape[0]
         rep_query_vector = query_vector.repeat(num_cells, 1)  # M x H
@@ -113,7 +117,8 @@ class BaseMemory(nn.Module):
             last_ment_score = torch.squeeze(self.ment_coref_mlp(last_ment_vec), dim=-1)
             coref_score = coref_score + last_ment_score  # M
 
-        coref_new_mask = torch.cat([self.get_coref_mask(ent_counter), torch.tensor([1.0]).cuda()], dim=0)
+        coref_new_mask = torch.cat([self.get_coref_mask(ent_counter, ment_type, cluster_type),
+                                    torch.tensor([1.0]).cuda()], dim=0)
         coref_new_scores = torch.cat(([coref_score, torch.tensor([0.0]).cuda()]), dim=0)
 
         coref_new_scores = coref_new_scores * coref_new_mask + (1 - coref_new_mask) * (-1e4)

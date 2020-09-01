@@ -74,17 +74,20 @@ class UnboundedMemController(BaseController):
         gt_mentions, pred_mentions, gt_actions, mention_emb_list =\
             self.get_mention_embs_and_actions(example)
 
-        doc_type = example["doc_key"].split("/")[0]
-        action_prob_list, action_list = self.memory_net(
-            doc_type, mention_emb_list, gt_actions, pred_mentions,
-            teacher_forcing=teacher_forcing)  # , example[""])
+        if len(pred_mentions) > 0:
+            doc_type = example["doc_key"].split("/")[0]
+            action_prob_list, action_list = self.memory_net(
+                doc_type, mention_emb_list, gt_actions, pred_mentions,
+                teacher_forcing=teacher_forcing)  # , example[""])
 
-        coref_loss = 0.0
-        if self.training or teacher_forcing:
-            loss = {}
-            coref_loss = self.calculate_coref_loss(action_prob_list, gt_actions)
-            loss['coref'] = coref_loss/len(mention_emb_list)
-            loss['total'] = loss['coref']
-            return loss, action_list, pred_mentions, gt_actions, gt_mentions
-        else:
-            return coref_loss, action_list, pred_mentions, gt_actions, gt_mentions
+            coref_loss = 0.0
+            if self.training or teacher_forcing:
+                loss = {}
+                coref_loss = self.calculate_coref_loss(action_prob_list, gt_actions)
+                loss['coref'] = coref_loss/len(mention_emb_list)
+                loss['total'] = loss['coref']
+                return loss, action_list, pred_mentions, gt_actions, gt_mentions
+            else:
+                return coref_loss, action_list, pred_mentions, gt_actions, gt_mentions
+
+        return None

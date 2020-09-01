@@ -9,7 +9,7 @@ from collections import defaultdict, OrderedDict
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
-from utils import action_sequences_to_clusters, classify_errors
+from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
 from litbank_utils.utils import load_data
 from coref_utils.conll import evaluate_conll
 from coref_utils.utils import mention_to_cluster
@@ -28,7 +28,8 @@ class Experiment:
     def __init__(self, data_dir=None, conll_data_dir=None,
                  model_dir=None, best_model_dir=None,
                  # Model params
-                 batch_size=32, seed=0, init_lr=1e-3, max_gradient_norm=5.0,
+                 focus_group='joint',
+                 seed=0, init_lr=1e-3, max_gradient_norm=5.0,
                  max_epochs=20, max_segment_len=128, eval=False, num_train_docs=None,
                  mem_type=False,
                  no_singletons=False,
@@ -48,6 +49,7 @@ class Experiment:
                               "dev": self.dev_examples,
                               "test": self.test_examples}
         self.cluster_threshold = (2 if no_singletons else 1)
+        self.focus_group = focus_group
 
         self.slurm_id = slurm_id
         self.conll_scorer = conll_scorer
@@ -65,11 +67,11 @@ class Experiment:
 
         # Initialize model and training metadata
         if mem_type == 'fixed_mem':
-            self.model = LearnedFixedMemController(**kwargs).cuda()
+            self.model = LearnedFixedMemController(focus_group=focus_group, **kwargs).cuda()
         elif mem_type == 'lru':
-            self.model = LRUController(**kwargs).cuda()
+            self.model = LRUController(focus_group=focus_group, **kwargs).cuda()
         elif mem_type == 'unbounded':
-            self.model = UnboundedMemController(**kwargs).cuda()
+            self.model = UnboundedMemController(focus_group=focus_group, **kwargs).cuda()
         self.initialize_setup(init_lr=init_lr)
         utils.print_model_info(self.model)
         sys.stdout.flush()
@@ -125,7 +127,10 @@ class Experiment:
                                   ("WO", 0), ("FL", 0), ("C", 0)])
             for example in self.train_examples:
                 self.train_info['global_steps'] += 1
-                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = model(example)
+                output = model(example)
+                if output is None:
+                    continue
+                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = output
                 batch_errors = classify_errors(pred_action_list, gt_actions)
                 for key in errors:
                     errors[key] += batch_errors[key]
@@ -198,7 +203,10 @@ class Experiment:
         corr_actions, total_actions = 0, 0
         with torch.no_grad():
             for example in self.dev_examples:
-                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = model(example, teacher_forcing=True)
+                output = model(example, teacher_forcing=True)
+                if output is None:
+                    continue
+                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = output
                 batch_errors = classify_errors(pred_action_list, gt_actions)
                 for key in errors:
                     errors[key] += batch_errors[key]
@@ -229,21 +237,29 @@ class Experiment:
         data_iter = self.data_iter_map[split]
 
         pred_class_counter, gt_class_counter = defaultdict(int), defaultdict(int)
-        num_gt_clusters, num_pred_clusters = 0, 0
 
         with torch.no_grad():
             log_file = path.join(self.model_dir, split + ".log.jsonl")
-            with open(log_file, 'w') as f:
+            with open(log_file, 'w') as log_f:
                 # Capture the auxiliary action accuracy
                 corr_actions = 0.0
                 total_actions = 0.0
 
                 # Output file to write the outputs
-                evaluator = CorefEvaluator()
-                oracle_evaluator = CorefEvaluator()
+                if self.focus_group == 'joint':
+                    evaluator_dict = OrderedDict(
+                        [('entity', CorefEvaluator()), ('event', CorefEvaluator()), ('joint', CorefEvaluator())])
+                else:
+                    evaluator_dict = OrderedDict([(self.focus_group, CorefEvaluator())])
+
                 coref_predictions, subtoken_maps = {}, {}
                 for example in data_iter:
-                    loss, action_list, pred_mentions, gt_actions, gt_mentions = model(example)
+                    output = model(example)
+                    if output is None:
+                        # Possible when doing just events where some files don't have event annotations
+                        continue
+                    loss, action_list, pred_mentions, gt_actions, gt_mentions = output
+
                     for pred_action, gt_action in zip(action_list, gt_actions):
                         pred_class_counter[pred_action[1]] += 1
                         gt_class_counter[gt_action[1]] += 1
@@ -256,55 +272,45 @@ class Experiment:
                     coref_predictions[example["doc_key"]] = predicted_clusters
                     subtoken_maps[example["doc_key"]] = example["subtoken_map"]
 
-                    predicted_clusters, mention_to_predicted =\
-                        mention_to_cluster(predicted_clusters, threshold=self.cluster_threshold)
-                    gold_clusters, mention_to_gold =\
-                        mention_to_cluster(example["clusters"], threshold=self.cluster_threshold)
+                    for focus_group, evaluator in evaluator_dict.items():
+                        filt_clusters, filt_mention_to_predicted =\
+                            mention_to_cluster(predicted_clusters, threshold=self.cluster_threshold,
+                                               focus_group=focus_group)
+                        filt_gold_clusters, filt_gold_mention_to_predicted =\
+                            mention_to_cluster(example["clusters"], threshold=self.cluster_threshold,
+                                               focus_group=focus_group)
 
-                    # Update the number of clusters
-                    num_gt_clusters += len(gold_clusters)
-                    num_pred_clusters += len(predicted_clusters)
-
-                    oracle_clusters = action_sequences_to_clusters(gt_actions, gt_mentions)
-                    oracle_clusters, mention_to_oracle = \
-                        mention_to_cluster(oracle_clusters,
-                                           threshold=self.cluster_threshold)
-                    evaluator.update(predicted_clusters, gold_clusters,
-                                     mention_to_predicted, mention_to_gold)
-                    oracle_evaluator.update(oracle_clusters, gold_clusters,
-                                            mention_to_oracle, mention_to_gold)
+                        if len(filt_gold_clusters) > 0:
+                            evaluator.update(
+                                filt_clusters, filt_gold_clusters,
+                                filt_mention_to_predicted, filt_gold_mention_to_predicted)
 
                     log_example = dict(example)
                     log_example["gt_actions"] = gt_actions
                     log_example["pred_actions"] = action_list
                     log_example["predicted_clusters"] = predicted_clusters
 
-                    f.write(json.dumps(log_example) + "\n")
+                    log_f.write(json.dumps(log_example) + "\n")
 
+                relv_fscore = 0
                 # Print individual metrics
-                indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
-                perf_str = ""
-                for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator.evaluators):
-                    perf_str += ", " + indv_metric + ": {:.1f}".format(indv_evaluator.get_f1() * 100)
+                for focus_group, evaluator in evaluator_dict.items():
+                    indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
+                    perf_str = ""
+                    for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator.evaluators):
+                        perf_str += ", " + indv_metric + ": {:.1f}".format(indv_evaluator.get_f1() * 100)
 
-                prec, rec, fscore = evaluator.get_prf()
-                fscore = fscore * 100
-                logging.info("F-score: %.1f %s" % (fscore, perf_str))
+                    prec, rec, fscore = evaluator.get_prf()
+                    fscore = fscore * 100
+                    if self.focus_group == focus_group:
+                        relv_fscore = fscore
+                    logging.info(focus_group.capitalize())
+                    logging.info("F-score: %.1f %s\n" % (fscore, perf_str))
 
-                if False:
-                    gold_path = path.join(self.conll_data_dir, split + ".conll")
-                    conll_results = evaluate_conll(
-                        self.conll_scorer, gold_path, coref_predictions, subtoken_maps)
-                    average_f1 = sum(results for results in conll_results.values()) / len(conll_results)
-                    logging.info("(CoNLL) F-score : %.3f, MUC: %.3f, Bcub: %.3f, CEAFE: %.3f"
-                                 % (average_f1, conll_results["muc"], conll_results['bcub'],
-                                    conll_results['ceafe']))
-
-                logging.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
-                             (corr_actions/total_actions, oracle_evaluator.get_prf()[2]))
+                # logging.info("Action accuracy: %.3f" % (corr_actions/total_actions))
                 logging.info(log_file)
 
-        return fscore
+        return relv_fscore
 
     def final_eval(self):
         """Evaluate the model on train, dev, and test"""

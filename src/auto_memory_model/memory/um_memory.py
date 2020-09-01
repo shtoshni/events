@@ -11,23 +11,24 @@ class UnboundedMemory(BaseMemory):
         mem = torch.zeros(1, self.mem_size).cuda()
         ent_counter = torch.tensor([0]).cuda()
         last_mention_idx = torch.zeros(1).long().cuda()
-        return mem, ent_counter, last_mention_idx
+        cluster_type = torch.tensor([-1]).cuda()
+        return mem, ent_counter, last_mention_idx, cluster_type
 
-    def predict_action(self, query_vector, mem_vectors, last_ment_vectors,
+    def predict_action(self, query_vector, ment_type, mem_vectors, cluster_type, last_ment_vectors,
                        ment_idx, ent_counter, last_mention_idx):
         distance_embs = self.get_distance_emb(ment_idx - last_mention_idx)
         counter_embs = self.get_counter_emb(ent_counter)
 
         coref_new_scores, coref_new_log_prob = self.get_coref_new_log_prob(
-            query_vector, mem_vectors, last_ment_vectors,
-            ent_counter, distance_embs, counter_embs)
+            query_vector, ment_type, mem_vectors, cluster_type,
+            last_ment_vectors, ent_counter, distance_embs, counter_embs)
 
         return coref_new_scores
 
     def forward(self, doc_type, mention_emb_list, actions, mentions,
                 teacher_forcing=False):
         # Initialize memory
-        mem_vectors, ent_counter, last_mention_idx = self.initialize_memory()
+        mem_vectors, ent_counter, last_mention_idx, cluster_type = self.initialize_memory()
         last_ment_vectors = torch.zeros_like(mem_vectors)
 
         if self.entity_rep == 'lstm':
@@ -54,7 +55,7 @@ class UnboundedMemory(BaseMemory):
                            width_embedding, last_action_emb], dim=0))
 
             coref_new_scores = self.predict_action(
-                query_vector, mem_vectors, last_ment_vectors,
+                query_vector, ment_type, mem_vectors, cluster_type, last_ment_vectors,
                 ment_idx, ent_counter, last_mention_idx)
 
             action_logit_list.append(coref_new_scores)
@@ -65,7 +66,7 @@ class UnboundedMemory(BaseMemory):
                 last_ment_vectors = torch.unsqueeze(query_vector, dim=0)
                 ent_counter = torch.tensor([1.0]).cuda()
                 last_mention_idx[0] = 0
-
+                cluster_type = torch.tensor([ment_type]).cuda()
                 action_list.append((0, 'o'))
             else:
                 pred_max_idx = torch.argmax(coref_new_scores).item()
@@ -123,6 +124,8 @@ class UnboundedMemory(BaseMemory):
                     last_ment_vectors = last_ment_vectors * (1 - mask) + mask * rep_query_vector
                     ent_counter = ent_counter + cell_mask
                     last_mention_idx[cell_idx] = ment_idx
+
+                    assert (ment_type == cluster_type[cell_idx])
                 elif action_str == 'o':
                     # Append the new vector
                     mem_vectors = torch.cat([mem_vectors, torch.unsqueeze(query_vector, dim=0)], dim=0)
@@ -131,5 +134,6 @@ class UnboundedMemory(BaseMemory):
 
                     ent_counter = torch.cat([ent_counter, torch.tensor([1.0]).cuda()], dim=0)
                     last_mention_idx = torch.cat([last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
+                    cluster_type = torch.cat([cluster_type, torch.tensor([ment_type]).cuda()], dim=0)
 
         return action_logit_list, action_list

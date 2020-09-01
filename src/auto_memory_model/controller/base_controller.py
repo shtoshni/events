@@ -5,11 +5,11 @@ from pytorch_utils.utils import get_sequence_mask, get_span_mask
 from document_encoder.independent import IndependentDocEncoder
 from document_encoder.overlap import OverlapDocEncoder
 from auto_memory_model.utils import get_ordered_mentions
-
+from red_utils.constants import ELEM_TYPE_TO_IDX
 
 class BaseController(nn.Module):
     def __init__(self,
-                 dropout_rate=0.5, max_span_width=20,
+                 dropout_rate=0.5, max_span_width=20, focus_group='both',
                  ment_emb='endpoint', doc_enc='independent', **kwargs):
         super(BaseController, self).__init__()
         self.max_span_width = max_span_width
@@ -22,6 +22,7 @@ class BaseController(nn.Module):
         self.hsize = self.doc_encoder.hsize
         self.drop_module = nn.Dropout(p=dropout_rate, inplace=False)
         self.ment_emb = ment_emb
+        self.focus_group = focus_group
         self.ment_emb_to_size_factor = {'attn': 3, 'endpoint': 2, 'max': 1}
 
         if self.ment_emb == 'attn':
@@ -63,13 +64,22 @@ class BaseController(nn.Module):
 
         gt_mentions = get_ordered_mentions(example["clusters"])
         pred_mentions = gt_mentions
-        gt_actions = self.get_actions(pred_mentions, example["clusters"])
+        # print(self.focus_group)
+        if self.focus_group == 'entity':
+            pred_mentions = [mention for mention in pred_mentions if mention[2] == ELEM_TYPE_TO_IDX['ENTITY']]
+        elif self.focus_group == 'event':
+            pred_mentions = [mention for mention in pred_mentions if mention[2] == ELEM_TYPE_TO_IDX['EVENT']]
 
-        cand_starts, cand_ends, ent_type = zip(*pred_mentions)
-        mention_embs = self.get_mention_embeddings(
-            encoded_output, torch.tensor(cand_starts).cuda(), torch.tensor(cand_ends).cuda())
-        mention_emb_list = torch.unbind(mention_embs, dim=0)
-        return gt_mentions, pred_mentions, gt_actions, mention_emb_list
+        if len(pred_mentions):
+            gt_actions = self.get_actions(pred_mentions, example["clusters"])
+
+            cand_starts, cand_ends, ent_type = zip(*pred_mentions)
+            mention_embs = self.get_mention_embeddings(
+                encoded_output, torch.tensor(cand_starts).cuda(), torch.tensor(cand_ends).cuda())
+            mention_emb_list = torch.unbind(mention_embs, dim=0)
+            return gt_mentions, pred_mentions, gt_actions, mention_emb_list
+        else:
+            return [], [], [], []
 
     def forward(self, example, teacher_forcing=False):
         pass
