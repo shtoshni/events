@@ -19,7 +19,7 @@ from auto_memory_model.controller.lru_controller import LRUController
 from auto_memory_model.controller.um_controller import UnboundedMemController
 
 EPS = 1e-8
-NUM_STUCK_EPOCHS = 10
+NUM_STUCK_EPOCHS = 20
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 
@@ -327,7 +327,7 @@ class Experiment:
             perf_file = path.join(perf_dir, self.slurm_id + ".txt")
 
         with open(perf_file, 'w') as f:
-            for split in ['Train', 'Dev', 'Test']:
+            for split in ['Train', 'Dev']:  # , 'Test']:
                 logging.info('\n')
                 logging.info('%s' % split)
                 split_f1 = self.eval_model(split.lower())

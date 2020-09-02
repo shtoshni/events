@@ -53,7 +53,7 @@ class BaseMemory(nn.Module):
         self.doc_type_emb = nn.Embedding(3, self.emb_size)
         self.last_action_emb = nn.Embedding(4, self.emb_size)
         self.distance_embeddings = nn.Embedding(11, self.emb_size)
-        self.width_embeddings = nn.Embedding(30, self.emb_size)
+        self.width_embeddings = nn.Embedding(20, self.emb_size)
         self.counter_embeddings = nn.Embedding(11, self.emb_size)
 
     @staticmethod
@@ -72,10 +72,10 @@ class BaseMemory(nn.Module):
 
     @staticmethod
     def get_mention_width_bucket(width):
-        if width < 29:
+        if width < 19:
             return width
 
-        return 29
+        return 19
 
     def get_distance_emb(self, distance):
         distance_tens = self.get_distance_bucket(distance)
@@ -150,17 +150,24 @@ class BaseMemory(nn.Module):
         num_cells = mem_vectors.shape[0]
         rep_query_vector = query_vector.repeat(num_cells, 1)  # M x H
 
-        # Coref Score
+        # SRL Score
         pair_vec = torch.cat([mem_vectors, rep_query_vector, mem_vectors * rep_query_vector,
                               distance_embs, counter_embs], dim=-1)
         pair_score = self.srl_role_mlp(pair_vec)
+
         srl_score = torch.squeeze(pair_score, dim=-1)  # M
+        # Adding the option for picking None
+        srl_no_score = torch.cat(([srl_score, torch.tensor([0.0]).cuda()]), dim=0)
+
         srl_mask = self.get_srl_mask(ent_counter, ment_type, cluster_type)
+        srl_no_mask = torch.cat([srl_mask, torch.tensor([1.0]).cuda()], dim=0)
+
         # Softmax
-        srl_prob = srl_mask * torch.nn.functional.softmax(srl_score, dim=0)
-        srl_prob = srl_prob / (torch.sum(srl_prob) + 1e-8)
-        # Weighted-avg SRL vector
-        srl_vec = torch.mv(torch.transpose(mem_vectors, 1, 0), srl_prob)
+        srl_prob = srl_no_mask * torch.nn.functional.softmax(srl_no_score, dim=0)
+        srl_prob = srl_prob / (torch.sum(srl_no_mask) + 1e-8)
+
+        # Weighted-avg SRL vector - remove the last term which corresponds to NULL vector
+        srl_vec = torch.mv(torch.transpose(mem_vectors, 1, 0), srl_prob[:-1])
         return srl_vec
 
     def forward(self, mention_emb_list, actions, mentions, teacher_forcing=False):

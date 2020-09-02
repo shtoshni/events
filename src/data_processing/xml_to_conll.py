@@ -5,6 +5,7 @@ import json
 from collections import OrderedDict
 import xml.etree.ElementTree as ET
 import truecase
+from cleantext import clean
 
 from os import path
 from transformers import BertTokenizer
@@ -13,6 +14,7 @@ import argparse
 
 BERT_RE = re.compile(r'## *')
 ELEM_TYPE_TO_IDX = {'ENTITY': 0, 'EVENT': 1}
+NEWLINE_TOKEN = "[NEWL]"
 
 
 class DocumentState(object):
@@ -96,6 +98,11 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len)
     document_state = DocumentState(doc_name)
     word_idx = -1
     for idx, token in enumerate(tokenized_doc):
+        if token == NEWLINE_TOKEN:
+            # [NEWL] corresponds to "\n" in real doc
+            document_state.sentence_end[-1] = True
+            continue
+
         if not BERT_RE.match(token):
             word_idx += 1
 
@@ -114,10 +121,10 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len)
             else:
                 document_state.token_end += ([True])
 
-        # No annotation of sentence boundaries in RED. Hence always False for sentence end.
         document_state.sentence_end.append(False)
         document_state.subtoken_map.append(word_idx)
-
+    # Last word in the document is obviously end of sentence
+    document_state.sentence_end[-1] = True
     split_into_segments(document_state, segment_len,
                         document_state.sentence_end, document_state.token_end)
     document = document_state.finalize(clusters, ent_id_to_info)
@@ -125,16 +132,32 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len)
 
 
 def tokenize_span(span, doc_name, tokenizer, all_truecase=False):
+    span = span.replace("\n", "<N>")
     if all_truecase:
-        span = truecase.get_true_case(span)
+        if span.upper() == span:
+            # Only do it for all uppercase
+            span = truecase.get_true_case(span)
     elif "proxy/" in doc_name:
         span = truecase.get_true_case(span)
-    return tokenizer.tokenize(span)
+    # if
+    span = span.replace("<N>", NEWLINE_TOKEN)
+    newline_count = span.count(NEWLINE_TOKEN)
+
+    tokenized_span = tokenizer.tokenize(span)
+    # if ["[UNK]"] == tokenized_span:
+    if "[UNK]" in tokenized_span:
+        # Try cleaning the text and reprocess
+        cleaned_span = clean(span, lower=False)
+        tokenized_span = tokenizer.tokenize(cleaned_span)
+
+    # tokenized_span = [token for token in tokenized_span if token != '[UNK]']
+    return tokenized_span, newline_count
 
 
 def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase=False):
     # Read the source document
     doc_str = "".join(open(source_file).readlines())
+    # altered_doc_str = doc_str.replace("\n", "[NEWL]")
 
     # Parse the XML
     tree = ET.parse(annotation_file)
@@ -155,12 +178,13 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
         real_span = tuple([span_start, span_end])
         if real_span not in real_span_to_tokenized_span:
             before_span_str = doc_str[char_offset: span_start]
-            before_span_tokens = tokenize_span(before_span_str, doc_name, tokenizer, all_truecase=all_truecase)
+            before_span_tokens, newline_count = tokenize_span(before_span_str, doc_name, tokenizer, all_truecase=all_truecase)
             tokenized_doc.extend(before_span_tokens)
-            token_counter += len(before_span_tokens)
+            # Don't count newline tokens as they will ultimately be removed.
+            token_counter += len(before_span_tokens) - newline_count
 
             # Tokenize the span
-            span_tokens = tokenize_span(doc_str[span_start: span_end], doc_name, tokenizer, all_truecase=all_truecase)
+            span_tokens, newline_count = tokenize_span(doc_str[span_start: span_end], doc_name, tokenizer, all_truecase=all_truecase)
             ent_id_to_info[ent_id] = tuple([
                 token_counter, token_counter + len(span_tokens) - 1, ent_type])
             real_span_to_tokenized_span[real_span] = tuple(
@@ -168,15 +192,17 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
 
             tokenized_doc.extend(span_tokens)
             char_offset = span_end
-            token_counter += len(span_tokens)
+            # Don't count newline tokens as they will ultimately be removed.
+            token_counter += len(span_tokens) - newline_count
         else:
             tokenized_start, tokenized_end = real_span_to_tokenized_span[real_span]
             ent_id_to_info[ent_id] = tuple([tokenized_start, tokenized_end, ent_type])
 
     # Add the tokens after the last span
     rem_doc = doc_str[char_offset:]
-    rem_tokens = tokenize_span(rem_doc, doc_name, tokenizer, all_truecase=all_truecase)
-    token_counter += len(rem_tokens)
+    rem_tokens, newline_count = tokenize_span(rem_doc, doc_name, tokenizer, all_truecase=all_truecase)
+    # Don't count newline tokens as they will ultimately be removed.
+    token_counter += len(rem_tokens) - newline_count
 
     tokenized_doc.extend(rem_tokens)
     return tokenized_doc, ent_id_to_info, clusters
@@ -209,6 +235,7 @@ def minimize_partition(split, tokenizer, args, seg_len):
 
 def minimize_split(args, seg_len):
     tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+    tokenizer.add_special_tokens({'additional_special_tokens': [NEWLINE_TOKEN]})
     for split in ["dev", "test", "train"]:
         minimize_partition(split, tokenizer, args, seg_len)
 
