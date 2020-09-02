@@ -2,15 +2,14 @@ import os
 import re
 import sys
 import json
-import collections
-from collections import defaultdict, OrderedDict
-import xml
+from collections import OrderedDict
 import xml.etree.ElementTree as ET
+import truecase
 
 from os import path
 from transformers import BertTokenizer
 from data_processing.utils import get_ent_info, get_clusters_from_xml
-
+import argparse
 
 BERT_RE = re.compile(r'## *')
 ELEM_TYPE_TO_IDX = {'ENTITY': 0, 'EVENT': 1}
@@ -125,7 +124,15 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len)
     return document
 
 
-def tokenize_doc(tokenizer, source_file, annotation_file):
+def tokenize_span(span, doc_name, tokenizer, all_truecase=False):
+    if all_truecase:
+        span = truecase.get_true_case(span)
+    elif "proxy/" in doc_name:
+        span = truecase.get_true_case(span)
+    return tokenizer.tokenize(span)
+
+
+def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase=False):
     # Read the source document
     doc_str = "".join(open(source_file).readlines())
 
@@ -142,74 +149,86 @@ def tokenize_doc(tokenizer, source_file, annotation_file):
     char_offset = 0  # Till what point has the document been processed
     ent_id_to_info = OrderedDict()
 
+    real_span_to_tokenized_span = {}
     for (span_start, span_end), ent_type, ent_id in ent_list:
         # Tokenize the string before the span and after the last span
-        before_span_str = doc_str[char_offset: span_start]
-        before_span_tokens = tokenizer.tokenize(before_span_str)
-        tokenized_doc.extend(before_span_tokens)
-        token_counter += len(before_span_tokens)
+        real_span = tuple([span_start, span_end])
+        if real_span not in real_span_to_tokenized_span:
+            before_span_str = doc_str[char_offset: span_start]
+            before_span_tokens = tokenize_span(before_span_str, doc_name, tokenizer, all_truecase=all_truecase)
+            tokenized_doc.extend(before_span_tokens)
+            token_counter += len(before_span_tokens)
 
-        # Tokenize the span
-        span_tokens = tokenizer.tokenize(doc_str[span_start: span_end])
-        ent_id_to_info[ent_id] = tuple([
-            token_counter, token_counter + len(span_tokens) - 1, ent_type])
-        tokenized_doc.extend(span_tokens)
-        char_offset = span_end
-        token_counter += len(span_tokens)
+            # Tokenize the span
+            span_tokens = tokenize_span(doc_str[span_start: span_end], doc_name, tokenizer, all_truecase=all_truecase)
+            ent_id_to_info[ent_id] = tuple([
+                token_counter, token_counter + len(span_tokens) - 1, ent_type])
+            real_span_to_tokenized_span[real_span] = tuple(
+                [token_counter, token_counter + len(span_tokens) - 1])
+
+            tokenized_doc.extend(span_tokens)
+            char_offset = span_end
+            token_counter += len(span_tokens)
+        else:
+            tokenized_start, tokenized_end = real_span_to_tokenized_span[real_span]
+            ent_id_to_info[ent_id] = tuple([tokenized_start, tokenized_end, ent_type])
 
     # Add the tokens after the last span
     rem_doc = doc_str[char_offset:]
-    rem_tokens = tokenizer.tokenize(rem_doc)
+    rem_tokens = tokenize_span(rem_doc, doc_name, tokenizer, all_truecase=all_truecase)
     token_counter += len(rem_tokens)
 
     tokenized_doc.extend(rem_tokens)
     return tokenized_doc, ent_id_to_info, clusters
 
 
-def minimize_partition(split, tokenizer,
-                       source_dir, ann_dir, doc_dir, seg_len, output_dir):
-    split_list_file = path.join(doc_dir, f'{split}.txt')
+def minimize_partition(split, tokenizer, args, seg_len):
+    split_list_file = path.join(args.doc_dir, f'{split}.txt')
     split_files = set([file_name.strip() for file_name in open(split_list_file).readlines()])
 
     source_files, annotation_files = [], []
     for split_file in split_files:
-        source_files.append(path.join(source_dir, split_file))
-        annotation_files.append(path.join(ann_dir, split_file) + ".RED-Relation.gold.completed.xml")
+        source_files.append(path.join(args.source_dir, split_file))
+        annotation_files.append(path.join(args.ann_dir, split_file) + ".RED-Relation.gold.completed.xml")
 
-    output_path = path.join(output_dir, "{}.{}.jsonlines".format(split, seg_len))
+    output_path = path.join(args.output_dir, "{}.{}.jsonlines".format(split, seg_len))
     count = 0
 
     print("Minimizing {}".format(split))
     with open(output_path, "w") as output_file:
-        for filename, source_file, annotation_file in \
+        for doc_name, source_file, annotation_file in \
                 zip(split_files, source_files, annotation_files):
-            tokenized_doc, ent_id_to_info, clusters = tokenize_doc(tokenizer, source_file, annotation_file)
-            document = get_document(filename, tokenized_doc, clusters, ent_id_to_info, seg_len)
+            tokenized_doc, ent_id_to_info, clusters = tokenize_doc(doc_name, tokenizer, source_file, annotation_file,
+                                                                   all_truecase=args.all_truecase)
+            document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len)
             output_file.write(json.dumps(document))
             output_file.write("\n")
             count += 1
     print("Wrote {} documents to {}".format(count, output_path))
 
 
-def minimize_split(source_dir, ann_dir, doc_dir, seg_len, output_dir):
-    # do_lower_case = True if 'chinese' in vocab_file else False
+def minimize_split(args, seg_len):
     tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-    # Create cross validation output dir
-
-    minimize_partition("dev", tokenizer, source_dir, ann_dir, doc_dir, seg_len, output_dir)
-    minimize_partition("train", tokenizer, source_dir, ann_dir, doc_dir, seg_len, output_dir)
-    minimize_partition("test", tokenizer, source_dir, ann_dir, doc_dir, seg_len, output_dir)
+    for split in ["dev", "test", "train"]:
+        minimize_partition(split, tokenizer, args, seg_len)
 
 
 if __name__ == "__main__":
     input_dir = sys.argv[1]
 
-    source_dir = path.join(input_dir, "data/source")
-    ann_dir = path.join(input_dir, "data/mod_annotation")
-    doc_dir = path.join(input_dir, "docs")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_dir", type=str, help="Input directory root")
+    parser.add_argument("output_dir", type=str, help="Output directory")
+    parser.add_argument("-all_truecase", default=False, action="store_true",
+                        help="Pass all documents through truecase.")
 
-    output_dir = sys.argv[2]
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
-    for seg_len in [128, 256, 384, 512]:
-        minimize_split(source_dir, ann_dir, doc_dir, seg_len, output_dir)
+    parsed_args = parser.parse_args()
+
+    parsed_args.source_dir = path.join(parsed_args.input_dir, "data/source")
+    parsed_args.ann_dir = path.join(parsed_args.input_dir, "data/mod_annotation")
+    parsed_args.doc_dir = path.join(parsed_args.input_dir, "docs")
+
+    if not os.path.isdir(parsed_args.output_dir):
+        os.mkdir(parsed_args.output_dir)
+    for seg_len in [384, 512]:
+        minimize_split(parsed_args, seg_len)

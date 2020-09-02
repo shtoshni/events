@@ -50,6 +50,8 @@ class UnboundedMemory(BaseMemory):
             width_embedding = self.width_embeddings(torch.tensor(width_bucket).long().cuda())
             # Last action embedding
             last_action_emb = self.get_last_action_emb(action_str)
+
+            # SRL vec - Sort of SRL vec where we focus on only the other type of entities
             query_vector = self.query_projector(
                 torch.cat([ment_emb, doc_type_emb, ment_type_emb,
                            width_embedding, last_action_emb], dim=0))

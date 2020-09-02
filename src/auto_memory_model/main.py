@@ -33,7 +33,9 @@ def main():
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
-    parser.add_argument('-pretrained_bert_dir', default=None, type=str,
+    parser.add_argument('-all_truecase', default=False,
+                        action="store_true", help='All documents processed through truecase.')
+    parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/litbank_coref/resources", type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
@@ -64,14 +66,14 @@ def main():
     parser.add_argument('-entity_rep', default='avg', type=str,
                         choices=['lstm', 'gru', 'max', 'avg'],
                         help='Entity representation.')
+    parser.add_argument('-use_srl_vec', default=False, action="store_true",
+                        help="If true, coreference for event would also attend to entities, and vice-versa.")
     parser.add_argument('-emb_size', default=20, type=int,
                         help='Embedding size of features.')
     parser.add_argument('-use_last_mention', default=False, action="store_true",
                         help="Use last mention along with the global features if True.")
 
     # Training params
-    parser.add_argument('--batch_size', '-bsize',
-                        help='Batch size', default=1, type=int)
     parser.add_argument('-new_ent_wt', help='Weight of new entity term in coref loss',
                         default=1.0, type=float)
     parser.add_argument('-over_loss_wt', help='Weight of overwrite loss',
@@ -86,6 +88,8 @@ def main():
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
+    parser.add_argument('-ft_init_lr', help="Fine-tuning learning rate",
+                        default=2e-5, type=float)
     parser.add_argument('-no_singletons', help="No singletons.",
                         default=False, action="store_true")
     parser.add_argument('-eval', help="Evaluate model",
@@ -98,10 +102,11 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # Encoder params
+    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc", "all_truecase",  # Encoder params
                 'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
+                'use_srl_vec',  # SRL vector
                 'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
-                'max_epochs', 'dropout_rate', 'batch_size', 'seed', 'init_lr',
+                'max_epochs', 'dropout_rate', 'seed', 'init_lr',
                 'focus_group',  # Mentions of particular focus
                 'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt",  # Training params
                 ]
@@ -122,7 +127,8 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_enc}')
+    doc_enc = args.doc_enc + ('_truecase' if args.all_truecase else '')
+    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{doc_enc}')
     print(args.data_dir)
     # Log directory for Tensorflow Summary
     log_dir = path.join(model_dir, "logs")

@@ -10,8 +10,7 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
-from litbank_utils.utils import load_data
-from coref_utils.conll import evaluate_conll
+from red_utils.utils import load_data
 from coref_utils.utils import mention_to_cluster
 from coref_utils.metrics import CorefEvaluator
 import pytorch_utils.utils as utils
@@ -86,7 +85,7 @@ class Experiment:
     def initialize_setup(self, init_lr, lr_decay=10):
         """Initialize model and training info."""
         self.train_info = {}
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=init_lr, eps=1e-6)
         self.optim_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.1, patience=3,
@@ -347,9 +346,8 @@ class Experiment:
     def load_model(self, location):
         checkpoint = torch.load(location)
         self.model.load_state_dict(checkpoint['model'], strict=False)
-        print(type(checkpoint['model']))
-        print(checkpoint['model'].keys())
-
+        # print(type(checkpoint['model']))
+        # print(checkpoint['model'].keys())
         self.optimizer.load_state_dict(
             checkpoint['optimizer'])
         self.optim_scheduler.load_state_dict(
