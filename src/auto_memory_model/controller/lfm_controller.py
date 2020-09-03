@@ -5,6 +5,7 @@ from auto_memory_model.memory.lfm_memory import LearnedFixedMemory
 from auto_memory_model.controller.base_controller import BaseController
 from auto_memory_model.utils import get_mention_to_cluster, get_ordered_mentions
 
+
 class LearnedFixedMemController(BaseController):
     def __init__(self, num_cells=10, over_loss_wt=0.1, new_ent_wt=1.0, **kwargs):
         super(LearnedFixedMemController, self).__init__(**kwargs)
@@ -25,7 +26,6 @@ class LearnedFixedMemController(BaseController):
     def get_actions(self, mentions, clusters):
         # Useful data structures
         mention_to_cluster = get_mention_to_cluster(clusters)
-        ordered_mentions = get_ordered_mentions(clusters)
 
         actions = []
         cell_to_cluster = {}
@@ -126,31 +126,38 @@ class LearnedFixedMemController(BaseController):
         """
         Encode a batch of excerpts.
         """
-        gt_mentions, pred_mentions, gt_actions, mention_emb_list = self.get_mention_embs_and_actions(example)
+        gt_mentions, pred_mentions, gt_actions, mention_emb_list = \
+            self.get_mention_embs_and_actions(example)
 
-        action_prob_list, action_list = self.memory_net(
-            mention_emb_list, gt_actions, pred_mentions,
-            teacher_forcing=teacher_forcing)  # , example[""])
+        if len(pred_mentions) > 0:
+            doc_type = example["doc_key"].split("/")[0]
+            action_prob_list, action_list = self.memory_net(
+                doc_type, mention_emb_list, gt_actions, pred_mentions,
+                teacher_forcing=teacher_forcing)  # , example[""])
 
-        loss = {}
+            loss = {}
 
-        coref_new_prob_list, over_ign_prob_list = zip(*action_prob_list)
-        action_prob_tens = torch.stack(coref_new_prob_list, dim=0).cuda()  # M x (cells + 1)
-        action_indices = self.action_to_coref_new_idx(gt_actions)
+            coref_new_prob_list, over_ign_prob_list = zip(*action_prob_list)
+            action_prob_tens = torch.stack(coref_new_prob_list, dim=0).cuda()  # M x (cells + 1)
+            action_indices = self.action_to_coref_new_idx(gt_actions)
 
-        # Calculate overwrite loss
-        over_action_indices, prob_tens = self.over_ign_tuple_to_idx(
-            gt_actions, over_ign_prob_list)
-        over_loss = self.loss_fn['over'](prob_tens, over_action_indices)
-        over_loss_weight = over_action_indices.shape[0]
-        loss['over'] = over_loss/over_loss_weight
+            # Calculate overwrite loss
+            over_action_indices, prob_tens = self.over_ign_tuple_to_idx(
+                gt_actions, over_ign_prob_list)
+            over_loss = self.loss_fn['over'](prob_tens, over_action_indices)
+            over_loss_weight = over_action_indices.shape[0]
+            loss['over'] = over_loss / over_loss_weight
 
-        coref_loss = self.loss_fn['coref'](action_prob_tens, action_indices)
-        total_weight = len(mention_emb_list)  # Total mentions
+            coref_loss = self.loss_fn['coref'](action_prob_tens, action_indices)
+            total_weight = len(mention_emb_list)  # Total mentions
 
-        if self.training or teacher_forcing:
-            loss['coref'] = coref_loss/total_weight
-            loss['total'] = loss['coref'] + self.over_loss_wt * loss['over']
-            return loss, action_list, pred_mentions, gt_actions, gt_mentions
-        else:
-            return coref_loss, action_list, pred_mentions, gt_actions, gt_mentions
+            if self.training or teacher_forcing:
+                loss['coref'] = coref_loss / total_weight
+                loss['total'] = loss['coref'] + self.over_loss_wt * loss['over']
+                return loss, action_list, pred_mentions, gt_actions, gt_mentions
+            else:
+                return coref_loss, action_list, pred_mentions, gt_actions, gt_mentions
+
+        return None
+
+

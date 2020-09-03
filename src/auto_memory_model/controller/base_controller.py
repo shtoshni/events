@@ -10,7 +10,9 @@ from red_utils.constants import ELEM_TYPE_TO_IDX
 class BaseController(nn.Module):
     def __init__(self,
                  dropout_rate=0.5, max_span_width=20, focus_group='both',
-                 ment_emb='endpoint', doc_enc='independent', **kwargs):
+                 ment_emb='endpoint', doc_enc='independent',
+                 sample_singletons=1.0,
+                 **kwargs):
         super(BaseController, self).__init__()
         self.max_span_width = max_span_width
 

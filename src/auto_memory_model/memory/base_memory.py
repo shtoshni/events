@@ -170,5 +170,5 @@ class BaseMemory(nn.Module):
         srl_vec = torch.mv(torch.transpose(mem_vectors, 1, 0), srl_prob[:-1])
         return srl_vec
 
-    def forward(self, mention_emb_list, actions, mentions, teacher_forcing=False):
+    def forward(self, doc_type, mention_emb_list, actions, mentions, teacher_forcing=False):
         pass

@@ -65,7 +65,7 @@ class Experiment:
         self.best_model_path = path.join(best_model_dir, 'model.pth')
 
         # Initialize model and training metadata
-        if mem_type == 'fixed_mem':
+        if mem_type == 'learned':
             self.model = LearnedFixedMemController(focus_group=focus_group, **kwargs).cuda()
         elif mem_type == 'lru':
             self.model = LRUController(focus_group=focus_group, **kwargs).cuda()
@@ -248,8 +248,11 @@ class Experiment:
                 if self.focus_group == 'joint':
                     evaluator_dict = OrderedDict(
                         [('entity', CorefEvaluator()), ('event', CorefEvaluator()), ('joint', CorefEvaluator())])
+                    oracle_evaluator_dict = OrderedDict(
+                        [('entity', CorefEvaluator()), ('event', CorefEvaluator()), ('joint', CorefEvaluator())])
                 else:
                     evaluator_dict = OrderedDict([(self.focus_group, CorefEvaluator())])
+                    oracle_evaluator_dict = OrderedDict([(self.focus_group, CorefEvaluator())])
 
                 coref_predictions, subtoken_maps = {}, {}
                 for example in data_iter:
@@ -268,10 +271,12 @@ class Experiment:
                     total_actions += len(action_list)
 
                     predicted_clusters = action_sequences_to_clusters(action_list, pred_mentions)
+                    oracle_clusters = action_sequences_to_clusters(gt_actions, pred_mentions)
+
                     coref_predictions[example["doc_key"]] = predicted_clusters
                     subtoken_maps[example["doc_key"]] = example["subtoken_map"]
 
-                    for focus_group, evaluator in evaluator_dict.items():
+                    for focus_group in evaluator_dict:
                         filt_clusters, filt_mention_to_predicted =\
                             mention_to_cluster(predicted_clusters, threshold=self.cluster_threshold,
                                                focus_group=focus_group)
@@ -279,10 +284,17 @@ class Experiment:
                             mention_to_cluster(example["clusters"], threshold=self.cluster_threshold,
                                                focus_group=focus_group)
 
+                        filt_oracle_clusters, filt_mention_to_oracle = \
+                            mention_to_cluster(oracle_clusters, threshold=self.cluster_threshold,
+                                               focus_group=focus_group)
+
                         if len(filt_gold_clusters) > 0:
-                            evaluator.update(
+                            evaluator_dict[focus_group].update(
                                 filt_clusters, filt_gold_clusters,
                                 filt_mention_to_predicted, filt_gold_mention_to_predicted)
+                            oracle_evaluator_dict[focus_group].update(
+                                filt_oracle_clusters, filt_gold_clusters,
+                                filt_mention_to_oracle, filt_gold_mention_to_predicted)
 
                     log_example = dict(example)
                     log_example["gt_actions"] = gt_actions
@@ -293,18 +305,19 @@ class Experiment:
 
                 relv_fscore = 0
                 # Print individual metrics
-                for focus_group, evaluator in evaluator_dict.items():
+                for focus_group in evaluator_dict:
                     indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
                     perf_str = ""
-                    for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator.evaluators):
+                    for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator_dict[focus_group].evaluators):
                         perf_str += ", " + indv_metric + ": {:.1f}".format(indv_evaluator.get_f1() * 100)
 
-                    prec, rec, fscore = evaluator.get_prf()
+                    prec, rec, fscore = evaluator_dict[focus_group].get_prf()
                     fscore = fscore * 100
                     if self.focus_group == focus_group:
                         relv_fscore = fscore
                     logging.info(focus_group.capitalize())
-                    logging.info("F-score: %.1f %s\n" % (fscore, perf_str))
+                    logging.info("F-score: %.1f %s" % (fscore, perf_str))
+                    logging.info("Oracle F-score: %.2f\n" % (oracle_evaluator_dict[focus_group].get_prf()[2]))
 
                 # logging.info("Action accuracy: %.3f" % (corr_actions/total_actions))
                 logging.info(log_file)

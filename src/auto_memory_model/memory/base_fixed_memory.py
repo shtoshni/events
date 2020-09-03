@@ -22,8 +22,9 @@ class BaseFixedMemory(BaseMemory):
         """Initialize the memory to null."""
         mem = torch.zeros(self.num_cells, self.mem_size).cuda()
         ent_counter = torch.tensor([0 for i in range(self.num_cells)]).cuda()
-        last_mention_idx = [0 for _ in range(self.num_cells)]
-        return mem, ent_counter, last_mention_idx
+        last_mention_idx = torch.tensor([0 for _ in range(self.num_cells)]).cuda()
+        cluster_type = torch.ones(self.num_cells).cuda() * -1
+        return mem, ent_counter, last_mention_idx, cluster_type
 
     def get_overwrite_ign_mask(self, ent_counter):
         last_unused_cell = None
@@ -45,5 +46,5 @@ class BaseFixedMemory(BaseMemory):
         overwrite_ign_mask = self.get_overwrite_ign_mask(ent_counter)
         return torch.cat([coref_mask, overwrite_ign_mask], dim=0)
 
-    def forward(self, mention_emb_list, actions, mentions, teacher_forcing=False):
+    def forward(self, doc_type, mention_emb_list, actions, mentions, teacher_forcing=False):
         pass

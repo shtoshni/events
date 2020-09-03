@@ -33,8 +33,8 @@ def main():
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
-    parser.add_argument('-all_truecase', default=False,
-                        action="store_true", help='All documents processed through truecase.')
+    # parser.add_argument('-all_truecase', default=True,
+    #                     action="store_true", help='All documents processed through truecase.')
     parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/litbank_coref/resources", type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
@@ -48,10 +48,12 @@ def main():
     parser.add_argument('-focus_group', default='joint', choices=['joint', 'entity', 'event'], type=str,
                         help='Mentions in focus. If both, the cluster all mentions, otherwise cluster particular type'
                              ' of mentions.')
+    parser.add_argument('-include_singletons', default=False,
+                        action="store_true", help='Include singletons in experiment or not.')
 
     # Memory variables
     parser.add_argument('-mem_type', default='unbounded',
-                        choices=['fixed_mem', 'lru', 'unbounded'],
+                        choices=['learned', 'lru', 'unbounded'],
                         help="Memory type.")
     parser.add_argument('-num_cells', default=20, type=int,
                         help="Number of memory cells.")
@@ -78,6 +80,8 @@ def main():
                         default=1.0, type=float)
     parser.add_argument('-over_loss_wt', help='Weight of overwrite loss',
                         default=1.0, type=float)
+    parser.add_argument('-sample_singletons', help='Sample singletons during training',
+                        default=1.0, type=float)
     parser.add_argument('-num_train_docs', default=None, type=int,
                         help='Number of training docs.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
@@ -91,7 +95,7 @@ def main():
     parser.add_argument('-ft_init_lr', help="Fine-tuning learning rate",
                         default=2e-5, type=float)
     parser.add_argument('-no_singletons', help="No singletons.",
-                        default=False, action="store_true")
+                        default=True, action="store_true")
     parser.add_argument('-eval', help="Evaluate model",
                         default=False, action="store_true")
     parser.add_argument('-slurm_id', help="Slurm ID",
@@ -102,13 +106,13 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc", "all_truecase",  # Encoder params
+    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # "all_truecase",  # Encoder params
                 'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
                 'use_srl_vec',  # SRL vector
                 'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr',
                 'focus_group',  # Mentions of particular focus
-                'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt",  # Training params
+                'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt", 'sample_singletons' # Training params
                 ]
     for key, val in vars(args).items():
         if key in imp_opts:
@@ -127,7 +131,8 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    doc_enc = args.doc_enc + ('_truecase' if args.all_truecase else '')
+    # doc_enc = args.doc_enc + ('_truecase' if args.all_truecase else '')
+    doc_enc = args.doc_enc + ('_singleton' if args.include_singletons else '')
     args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{doc_enc}')
     print(args.data_dir)
     # Log directory for Tensorflow Summary

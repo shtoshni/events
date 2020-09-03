@@ -31,15 +31,24 @@ class DocumentState(object):
         self.sentence_map = []
         self.segment_info = []
 
-    def finalize(self, clusters, ent_id_to_info):
+    def finalize(self, clusters, ent_id_to_info, include_singletons=False):
         # populate clusters
         self.clusters = []
+        processed_ent_ids = set()
         for cluster in clusters:
             cur_cluster = []
             for ent_id in cluster:
+                processed_ent_ids.add(ent_id)
                 cur_cluster.append((ent_id_to_info[ent_id][0], ent_id_to_info[ent_id][1],
                                     ELEM_TYPE_TO_IDX[ent_id_to_info[ent_id][2]]))
             self.clusters.append(cur_cluster)
+
+        if include_singletons:
+            for ent_id, info in ent_id_to_info.items():
+                if ent_id in processed_ent_ids:
+                    continue
+                else:
+                    self.clusters.append([(info[0], info[1], ELEM_TYPE_TO_IDX[info[2]])])
 
         all_mentions = flatten(self.clusters)
         sentence_map = get_sentence_map(self.segments, self.sentence_end)
@@ -94,7 +103,7 @@ def get_sentence_map(segments, sentence_end):
     return sent_map
 
 
-def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len):
+def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len, include_singletons=False):
     document_state = DocumentState(doc_name)
     word_idx = -1
     for idx, token in enumerate(tokenized_doc):
@@ -127,7 +136,7 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len)
     document_state.sentence_end[-1] = True
     split_into_segments(document_state, segment_len,
                         document_state.sentence_end, document_state.token_end)
-    document = document_state.finalize(clusters, ent_id_to_info)
+    document = document_state.finalize(clusters, ent_id_to_info, include_singletons=include_singletons)
     return document
 
 
@@ -226,7 +235,8 @@ def minimize_partition(split, tokenizer, args, seg_len):
                 zip(split_files, source_files, annotation_files):
             tokenized_doc, ent_id_to_info, clusters = tokenize_doc(doc_name, tokenizer, source_file, annotation_file,
                                                                    all_truecase=args.all_truecase)
-            document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len)
+            document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len,
+                                    include_singletons=args.include_singletons)
             output_file.write(json.dumps(document))
             output_file.write("\n")
             count += 1
@@ -246,8 +256,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir", type=str, help="Input directory root")
     parser.add_argument("output_dir", type=str, help="Output directory")
-    parser.add_argument("-all_truecase", default=False, action="store_true",
+    parser.add_argument("-all_truecase", default=True, action="store_true",
                         help="Pass all documents through truecase.")
+    parser.add_argument("-include_singletons", default=False, action="store_true",
+                        help="Include singletons.")
 
     parsed_args = parser.parse_args()
 
