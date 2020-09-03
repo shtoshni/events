@@ -68,7 +68,7 @@ def main():
     parser.add_argument('-entity_rep', default='avg', type=str,
                         choices=['lstm', 'gru', 'max', 'avg'],
                         help='Entity representation.')
-    parser.add_argument('-use_srl_vec', default=False, action="store_true",
+    parser.add_argument('-use_srl', default=False, action="store_true",
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
     parser.add_argument('-emb_size', default=20, type=int,
                         help='Embedding size of features.')
@@ -108,7 +108,7 @@ def main():
     # Only include important options in hash computation
     imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # "all_truecase",  # Encoder params
                 'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
-                'use_srl_vec',  # SRL vector
+                'use_srl', 'include_singletons',  # SRL vector
                 'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr',
                 'focus_group',  # Mentions of particular focus

@@ -6,17 +6,15 @@ class LearnedFixedMemory(BaseFixedMemory):
     def __init__(self, **kwargs):
         super(LearnedFixedMemory, self).__init__(**kwargs)
 
-    def predict_action(self, query_vector, ment_type, mem_vectors, cluster_type, last_ment_vectors,
-                       ment_idx, ent_counter, last_mention_idx):
-        distance_embs = self.get_distance_emb(ment_idx - last_mention_idx)
-        counter_embs = self.get_counter_emb(ent_counter)
+    def predict_action(self, query_vector, ment_type, ment_idx):
+        distance_embs = self.get_distance_emb(ment_idx - self.last_mention_idx)
+        counter_embs = self.get_counter_emb(self.ent_counter)
 
-        coref_new_scores, coref_new_log_prob = self.get_coref_new_log_prob(
-            query_vector, ment_type, mem_vectors, cluster_type, last_ment_vectors,
-            ent_counter, distance_embs, counter_embs)
+        coref_new_scores, coref_new_log_prob, srl_vec, use_srl_mask = self.get_coref_new_log_prob(
+            query_vector, ment_type, distance_embs, counter_embs)
         # Fertility Score
         # Memory + Mention fertility input
-        mem_fert_input = torch.cat([mem_vectors, distance_embs, counter_embs], dim=-1)
+        mem_fert_input = torch.cat([self.mem, distance_embs, counter_embs], dim=-1)
         # Mention fertility input
         ment_distance_emb = torch.squeeze(self.distance_embeddings(torch.tensor([0]).cuda()), dim=0)
         ment_counter_emb = torch.squeeze(self.counter_embeddings(torch.tensor([0]).cuda()), dim=0)
@@ -26,20 +24,19 @@ class LearnedFixedMemory(BaseFixedMemory):
         fert_input = torch.cat([mem_fert_input, ment_fert_input], dim=0)
         fert_scores = torch.squeeze(self.fert_mlp(fert_input), dim=-1)
 
-        overwrite_ign_mask = self.get_overwrite_ign_mask(ent_counter)
+        overwrite_ign_mask = self.get_overwrite_ign_mask(self.ent_counter)
         overwrite_ign_scores = fert_scores * overwrite_ign_mask + (1 - overwrite_ign_mask) * (-1e4)
         overwrite_ign_log_prob = torch.nn.functional.log_softmax(overwrite_ign_scores, dim=0)
 
         norm_overwrite_ign_log_prob = (coref_new_log_prob[self.num_cells] + overwrite_ign_log_prob)
         all_log_prob = torch.cat([coref_new_log_prob[:self.num_cells],
                                   norm_overwrite_ign_log_prob], dim=0)
-        return all_log_prob, coref_new_scores, overwrite_ign_scores
+        return all_log_prob, coref_new_scores, overwrite_ign_scores, srl_vec, use_srl_mask
 
     def forward(self, doc_type, mention_emb_list, actions, mentions,
                 teacher_forcing=False):
         # Initialize memory
-        mem_vectors, ent_counter, last_mention_idx, cluster_type = self.initialize_memory()
-        last_ment_vectors = torch.zeros_like(mem_vectors)
+        self.initialize_memory()
 
         action_logit_list = []
         action_list = []  # argmax actions
@@ -62,9 +59,8 @@ class LearnedFixedMemory(BaseFixedMemory):
                 torch.cat([ment_emb, doc_type_emb, ment_type_emb,
                            width_embedding, last_action_emb], dim=0))
 
-            all_log_probs, coref_new_scores, overwrite_ign_scores = self.predict_action(
-                query_vector, ment_type, mem_vectors, cluster_type, last_ment_vectors,
-                ment_idx, ent_counter, last_mention_idx)
+            all_log_probs, coref_new_scores, overwrite_ign_scores, srl_vec, use_srl_mask = self.predict_action(
+                query_vector, ment_type, ment_idx)
 
             action_logit_list.append((coref_new_scores, overwrite_ign_scores))
 
@@ -93,33 +89,30 @@ class LearnedFixedMemory(BaseFixedMemory):
 
             if action_str == 'c':
                 # Update memory vector corresponding to cell_idx
-                if self.entity_rep == 'max':
-                    # Max pool coref operation
-                    max_pool_vec = torch.max(
-                        torch.stack([mem_vectors, rep_query_vector], dim=0), dim=0)[0]
-                    mem_vectors = mem_vectors * (1 - mask) + mask * max_pool_vec
-                elif self.entity_rep == 'avg':
-                    total_counts = torch.unsqueeze((ent_counter + 1).float(), dim=1)
-                    pool_vec_num = (mem_vectors * torch.unsqueeze(ent_counter, dim=1)
-                                    + rep_query_vector)
-                    avg_pool_vec = pool_vec_num/total_counts
-                    mem_vectors = mem_vectors * (1 - mask) + mask * avg_pool_vec
+                total_counts = torch.unsqueeze((self.ent_counter + 1).float(), dim=1)
+                pool_vec_num = (self.mem * torch.unsqueeze(self.ent_counter, dim=1)
+                                + rep_query_vector)
+                avg_pool_vec = pool_vec_num/total_counts
+                self.mem = self.mem * (1 - mask) + mask * avg_pool_vec
+                if self.use_srl:
+                    pool_vec_num = (self.srl_mem * torch.unsqueeze(self.ent_counter, dim=1)
+                                    + srl_vec)
+                    avg_pool_vec = pool_vec_num / total_counts
+                    self.srl_mem = self.srl_mem * (1 - mask) + mask * avg_pool_vec
 
                 # Update last mention vector
-                last_ment_vectors = last_ment_vectors * (1 - mask) + mask * rep_query_vector
-                ent_counter = ent_counter + cell_mask
-                last_mention_idx[cell_idx] = ment_idx
+                self.ent_counter = self.ent_counter + cell_mask
+                self.last_mention_idx[cell_idx] = ment_idx
 
-                assert (ment_type == cluster_type[cell_idx])
+                assert (ment_type == self.cluster_type[cell_idx])
             elif action_str == 'o':
                 # Replace the cell content
-                mem_vectors = mem_vectors * (1 - mask) + mask * rep_query_vector
+                self.mem = self.mem * (1 - mask) + mask * rep_query_vector
+                if self.use_srl:
+                    self.srl_mem = self.srl_mem * (1 - mask) + mask * srl_vec
 
-                # Update last mention vector
-                last_ment_vectors = last_ment_vectors * (1 - mask) + mask * rep_query_vector
-
-                ent_counter = ent_counter * (1 - cell_mask) + cell_mask
-                last_mention_idx[cell_idx] = ment_idx
-                cluster_type[cell_idx] = ment_type
+                self.ent_counter = self.ent_counter * (1 - cell_mask) + cell_mask
+                self.last_mention_idx[cell_idx] = ment_idx
+                self.cluster_type[cell_idx] = ment_type
 
         return action_logit_list, action_list

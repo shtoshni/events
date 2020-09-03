@@ -1,3 +1,4 @@
+import random
 import torch
 import torch.nn as nn
 
@@ -25,6 +26,7 @@ class BaseController(nn.Module):
         self.drop_module = nn.Dropout(p=dropout_rate, inplace=False)
         self.ment_emb = ment_emb
         self.focus_group = focus_group
+        self.sample_singletons = sample_singletons
         self.ment_emb_to_size_factor = {'attn': 3, 'endpoint': 2, 'max': 1}
 
         if self.ment_emb == 'attn':
@@ -64,7 +66,12 @@ class BaseController(nn.Module):
     def get_mention_embs_and_actions(self, example):
         encoded_output = self.doc_encoder(example)
 
-        gt_mentions = get_ordered_mentions(example["clusters"])
+        clusters = example["clusters"]
+        if self.sample_singletons < 1.0 and self.training:
+            clusters = [cluster for cluster in clusters
+                        if (len(cluster) > 1) or (random.random() <= self.sample_singletons)]
+
+        gt_mentions = get_ordered_mentions(clusters)
         pred_mentions = gt_mentions
         # print(self.focus_group)
         if self.focus_group == 'entity':
@@ -73,7 +80,7 @@ class BaseController(nn.Module):
             pred_mentions = [mention for mention in pred_mentions if mention[2] == ELEM_TYPE_TO_IDX['EVENT']]
 
         if len(pred_mentions):
-            gt_actions = self.get_actions(pred_mentions, example["clusters"])
+            gt_actions = self.get_actions(pred_mentions, clusters)
 
             cand_starts, cand_ends, ent_type = zip(*pred_mentions)
             mention_embs = self.get_mention_embeddings(

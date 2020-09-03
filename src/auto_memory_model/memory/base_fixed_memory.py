@@ -17,14 +17,16 @@ class BaseFixedMemory(BaseMemory):
         # self.ment_fert_mlp = MLP(input_size=self.mem_size, hidden_size=self.mlp_size,
         #                          output_size=1, num_layers=self.mlp_depth, bias=True,
         #                          drop_module=self.drop_module)
+        self.mem, self.srl_mem, self.ent_counter, self.last_mention_idx, self.cluster_type = (None, None, None, None,
+                                                                                              None)
 
     def initialize_memory(self):
         """Initialize the memory to null."""
-        mem = torch.zeros(self.num_cells, self.mem_size).cuda()
-        ent_counter = torch.tensor([0 for i in range(self.num_cells)]).cuda()
-        last_mention_idx = torch.tensor([0 for _ in range(self.num_cells)]).cuda()
-        cluster_type = torch.ones(self.num_cells).cuda() * -1
-        return mem, ent_counter, last_mention_idx, cluster_type
+        self.mem = torch.zeros(self.num_cells, self.mem_size).cuda()
+        self.srl_mem = torch.zeros(self.num_cells, self.mem_size).cuda()
+        self.ent_counter = torch.tensor([0 for i in range(self.num_cells)]).cuda()
+        self.last_mention_idx = torch.tensor([0 for _ in range(self.num_cells)]).cuda()
+        self.cluster_type = torch.ones(self.num_cells).cuda() * -1
 
     def get_overwrite_ign_mask(self, ent_counter):
         last_unused_cell = None
