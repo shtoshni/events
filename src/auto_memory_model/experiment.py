@@ -135,6 +135,9 @@ class Experiment:
                     errors[key] += batch_errors[key]
 
                 total_loss = loss['total']
+                if isinstance(total_loss, float):
+                    print(f"Weird thing - {total_loss}")
+                    continue
                 batch_loss += total_loss.item()
                 if not self.slurm_id:
                     writer.add_scalar("Loss/Total", total_loss, self.train_info['global_steps'])

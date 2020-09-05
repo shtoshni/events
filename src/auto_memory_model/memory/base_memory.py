@@ -128,7 +128,8 @@ class BaseMemory(nn.Module):
                 rep_srl_vec = srl_vec.repeat(num_cells, 1)
                 pair_vec = torch.cat([self.srl_mem, rep_srl_vec, self.srl_mem * rep_srl_vec,
                                       distance_embs, counter_embs], dim=-1)
-                srl_score = self.srl_coref_mlp(pair_vec)
+                # srl_mask = self.get_srl_mask(self.ent_counter, ment_type, self.cluster_type)
+                srl_score = self.srl_coref_mlp(pair_vec) # * srl_mask
 
                 pair_score += srl_score
 
