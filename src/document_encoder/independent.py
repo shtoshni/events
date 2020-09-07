@@ -17,6 +17,7 @@ class IndependentDocEncoder(BaseDocEncoder):
         """
         num_chunks = len(text_length_list)
         attn_mask = get_sequence_mask(torch.tensor(text_length_list).cuda()).cuda().float()
+        # attn_mask = attn_mask.clone().detach().requires_grad_(True)
 
         if not self.finetune:
             with torch.no_grad():

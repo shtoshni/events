@@ -20,3 +20,7 @@ def load_data(data_dir, max_segment_len, dataset='red'):
         assert(len(test_data) == 10)
 
     return train_data, dev_data, test_data
+
+
+def get_doc_type(example):
+    return example["doc_key"].split("/")[0]

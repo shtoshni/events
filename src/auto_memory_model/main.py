@@ -93,7 +93,9 @@ def main():
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Fine-tuning learning rate",
-                        default=2e-5, type=float)
+                        default=5e-5, type=float)
+    parser.add_argument('-finetune', help="Fine-tuning document encoder",
+                        default=False, action="store_true")
     parser.add_argument('-no_singletons', help="No singletons.",
                         default=True, action="store_true")
     parser.add_argument('-eval', help="Evaluate model",
@@ -106,11 +108,11 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # "all_truecase",  # Encoder params
+    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # Encoder params
                 'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
                 'use_srl', 'include_singletons',  # SRL vector
                 'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
-                'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetuning', 'ft_lr',
+                'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr',
                 'focus_group',  # Mentions of particular focus
                 'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt", 'sample_singletons' # Training params
                 ]

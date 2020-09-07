@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
-from pytorch_utils.modules import MLP
 import math
+
+from pytorch_utils.modules import MLP
+from red_utils.constants import DOC_TYPE_TO_IDX
+
 
 LOG2 = math.log(2)
 
@@ -28,7 +31,7 @@ class BaseMemory(nn.Module):
         self.action_str_to_idx = {'c': 0, 'o': 1, 'i': 2, '<s>': 3}
         self.action_idx_to_str = ['c', 'o', 'i']
 
-        self.doc_type_to_idx = {'deft': 0, 'pilot': 1, 'proxy': 2}
+        self.doc_type_to_idx = DOC_TYPE_TO_IDX
 
         self.use_last_mention = use_last_mention
 
@@ -37,9 +40,7 @@ class BaseMemory(nn.Module):
 
         self.mem_coref_mlp = MLP(3 * self.mem_size + 2 * self.emb_size, self.mlp_size, 1,
                                  num_hidden_layers=coref_mlp_depth, bias=True, drop_module=drop_module)
-        # self.mem_coref_mlp = MLP(2 * self.mem_size + 2 * self.emb_size +
-        #                          (self.mem_size if self.use_srl else 0), self.mlp_size, 1,
-        #                          num_hidden_layers=coref_mlp_depth, bias=True, drop_module=drop_module)
+
         if self.use_srl:
             self.srl_role_mlp = MLP(3 * self.mem_size + 2 * self.emb_size, self.mlp_size, 1,
                                     num_hidden_layers=coref_mlp_depth, bias=True, drop_module=drop_module)

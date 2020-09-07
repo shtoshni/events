@@ -3,10 +3,10 @@ import torch
 import torch.nn as nn
 
 from pytorch_utils.utils import get_sequence_mask, get_span_mask
-from document_encoder.independent import IndependentDocEncoder
-from document_encoder.overlap import OverlapDocEncoder
+from document_encoder import IndependentDocEncoder, OverlapDocEncoder
 from auto_memory_model.utils import get_ordered_mentions
 from red_utils.constants import ELEM_TYPE_TO_IDX
+
 
 class BaseController(nn.Module):
     def __init__(self,

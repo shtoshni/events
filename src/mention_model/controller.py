@@ -3,10 +3,10 @@ import torch.nn as nn
 
 from auto_memory_model.controller.base_controller import BaseController
 from pytorch_utils.modules import MLP
-from red_utils.constants import ELEM_TYPE_TO_IDX, IDX_TO_ELEM_TYPE
+from red_utils.constants import IDX_TO_ELEM_TYPE, DOC_TYPE_TO_IDX
 from document_encoder import IndependentDocEncoder, OverlapDocEncoder
 from pytorch_memlab import profile, set_target_gpu
-
+from red_utils.utils import get_doc_type
 
 ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.2, 'EVENT': 0.2}
 
@@ -16,13 +16,16 @@ class Controller(BaseController):
                  ment_emb='endpoint', dropout_rate=0.5, doc_enc='independent',
                  **kwargs):
         super(Controller, self).__init__()
+
         self.max_span_width = max_span_width
+
         if doc_enc == 'independent':
             self.doc_encoder = IndependentDocEncoder(**kwargs)
         else:
             self.doc_encoder = OverlapDocEncoder(**kwargs)
 
         self.hsize = self.doc_encoder.hsize
+        self.emb_size = 20
         self.drop_module = nn.Dropout(p=dropout_rate, inplace=False)
         self.ment_emb = ment_emb
         self.ment_emb_to_size_factor = {'attn': 3, 'endpoint': 2, 'max': 1}
@@ -37,15 +40,14 @@ class Controller(BaseController):
 
         self.other = nn.Module()
 
-        self.other.span_width_embeddings = nn.Embedding(self.max_span_width, 20)
-        self.other.span_width_prior_embeddings = nn.Embedding(self.max_span_width, 20)
+        self.other.span_width_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
+        self.other.span_width_prior_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
+        self.other.doc_type_emb = nn.Embedding(3, self.emb_size)
 
         self.other.mention_mlp = nn.ModuleDict()
         for elem_type in IDX_TO_ELEM_TYPE[:2]:
-            if elem_type == 'BOTH':
-                continue
             self.other.mention_mlp[elem_type] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 20,
+                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
                 hidden_size=self.mlp_size, output_size=1, num_hidden_layers=self.mlp_depth,
                 bias=True, drop_module=self.drop_module)
         self.other.span_width_mlp = MLP(
@@ -61,13 +63,19 @@ class Controller(BaseController):
 
         return width_scores
 
-    def get_span_embeddings(self, encoded_doc, ment_starts, ment_ends):
+    def get_span_embeddings(self, encoded_doc, ment_starts, ment_ends, doc_type):
         span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
 
         # Add span width embeddings
         span_width_indices = ment_ends - ment_starts
         span_width_embs = self.other.span_width_embeddings(span_width_indices)
         span_emb_list.append(span_width_embs)
+
+        doc_type_idx = DOC_TYPE_TO_IDX[doc_type]
+        doc_type_emb = self.other.doc_type_emb(torch.tensor(doc_type_idx).long().cuda())
+        doc_type_emb = torch.unsqueeze(doc_type_emb, dim=0)
+        doc_type_emb = doc_type_emb.repeat(span_width_embs.shape[0], 1)
+        span_emb_list.append(doc_type_emb)
 
         if self.ment_emb == 'attn':
             num_words = encoded_doc.shape[0]  # T
@@ -135,7 +143,8 @@ class Controller(BaseController):
 
         filt_cand_starts, filt_cand_ends, flat_cand_mask = self.get_candidate_endpoints(encoded_doc, example)
 
-        span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends)
+        span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends,
+                                             get_doc_type(example))
         del encoded_doc
         ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends)
 

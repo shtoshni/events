@@ -183,8 +183,8 @@ class Experiment:
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
-            logging.info("Epoch: %d, Time: %.2f, Recall: %.3f"
-                         % (epoch + 1, elapsed_time, recall))
+            logging.info("Epoch: %d, Time: %.2f, Recall: %.3f, Max Recall: %.3f"
+                         % (epoch + 1, elapsed_time, recall, self.train_info['val_perf']))
 
             sys.stdout.flush()
             if not self.slurm_id:

@@ -68,12 +68,13 @@ class Experiment:
         # Initialize model and training metadata
         self.finetune = finetune
         if mem_type == 'learned':
-            self.model = LearnedFixedMemController(focus_group=focus_group, **kwargs).cuda()
+            self.model = LearnedFixedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
         elif mem_type == 'lru':
-            self.model = LRUController(focus_group=focus_group, **kwargs).cuda()
+            self.model = LRUController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
         elif mem_type == 'unbounded':
-            self.model = UnboundedMemController(focus_group=focus_group, **kwargs).cuda()
+            self.model = UnboundedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
 
+        self.max_epochs = max_epochs
         self.train_info, self.optimizer, self.optim_scheduler = {}, {}, {}
 
         self.initialize_setup(init_lr=init_lr, ft_lr=ft_lr)
@@ -157,16 +158,23 @@ class Experiment:
                     print("Loss is NaN")
                     sys.exit()
                 # Backprop
-                optimizer.zero_grad()
+                for key in optimizer:
+                    optimizer[key].zero_grad()
+
                 total_loss.backward()
                 # Perform gradient clipping and update parameters
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(), max_gradient_norm)
 
-                optimizer.step()
+                for key in optimizer:
+                    optimizer[key].step()
+                if self.finetune:
+                    scheduler['doc'].step()
 
                 if self.train_info['global_steps'] % 10 == 0:
-                    print(example["doc_key"], '{:.3f}'.format(total_loss.item()))
+                    max_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
+                    print(example["doc_key"], '{:.3f}, Max memory {:.3f}'.format(total_loss.item(), max_mem))
+                    torch.cuda.reset_max_memory_allocated()
 
             sys.stdout.flush()
             logging.info(errors)
@@ -175,7 +183,7 @@ class Experiment:
 
             # Evaluate auto regressive performance on dev set
             val_loss = self.eval_auto_reg()
-            scheduler.step(val_loss)
+            scheduler['mem'].step(val_loss)
 
             # Dev performance
             fscore = self.eval_model()
@@ -190,7 +198,7 @@ class Experiment:
                 self.train_info['num_stuck_epochs'] = 0
                 self.train_info['val_perf'] = fscore
                 logging.info('Saving best model')
-                self.save_model(self.best_model_path)
+                self.save_model(self.best_model_path, model_type='best')
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
@@ -373,28 +381,36 @@ class Experiment:
     def load_model(self, location):
         checkpoint = torch.load(location)
         self.model.load_state_dict(checkpoint['model'], strict=False)
-        # print(type(checkpoint['model']))
-        # print(checkpoint['model'].keys())
-        self.optimizer.load_state_dict(
-            checkpoint['optimizer'])
-        self.optim_scheduler.load_state_dict(
-            checkpoint['scheduler'])
+        param_groups = ['mem', 'doc'] if self.finetune else ['mem']
+        for param_group in param_groups:
+            self.optimizer[param_group].load_state_dict(
+                checkpoint['optimizer'][param_group])
+            self.optim_scheduler[param_group].load_state_dict(
+                checkpoint['scheduler'][param_group])
         self.train_info = checkpoint['train_info']
         torch.set_rng_state(checkpoint['rng_state'])
         np.random.set_state(checkpoint['np_rng_state'])
 
-    def save_model(self, location):
+    def save_model(self, location, model_type='last'):
         """Save model"""
         model_state_dict = OrderedDict(self.model.state_dict())
-        for key in self.model.state_dict():
-            if 'bert.' in key:
-                del model_state_dict[key]
-        torch.save({
+        if not self.finetune:
+            for key in self.model.state_dict():
+                if 'bert.' in key:
+                    del model_state_dict[key]
+        save_dict = {
             'train_info': self.train_info,
             'model': model_state_dict,
-            'optimizer': self.optimizer.state_dict(),
-            'scheduler': self.optim_scheduler.state_dict(),
             'rng_state': torch.get_rng_state(),
-            'np_rng_state': np.random.get_state()
-        }, location)
-        # logging.info("Model saved at: %s" % (location))
+            'np_rng_state': np.random.get_state(),
+            'optimizer': {},
+            'scheduler': {},
+        }
+        if model_type != 'best':
+            param_groups = ['mem', 'doc'] if self.finetune else ['mem']
+            for param_group in param_groups:
+                save_dict['optimizer'][param_group] = self.optimizer[param_group].state_dict()
+                save_dict['scheduler'][param_group] = self.optim_scheduler[param_group].state_dict()
+
+        torch.save(save_dict, location)
+        logging.info(f"Model saved at: {location}")

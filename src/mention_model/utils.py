@@ -11,7 +11,7 @@ def get_mention_model_name(args):
     model_name_suffix += 'enc_' + f'{args.doc_enc}' + '_'
     model_name_suffix += 'segment_' + f'{args.max_segment_len}' + '_'
     if args.finetune:
-        model_name_suffix += 'ft_' + f'{args.ft_lr}'
+        model_name_suffix += 'ft_'  # + f'{args.ft_lr}'
 
     if model_name_suffix[-1] == '_':
         model_name_suffix = model_name_suffix[:-1]

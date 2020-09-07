@@ -3,7 +3,8 @@ import torch.nn as nn
 
 from auto_memory_model.memory.um_memory import UnboundedMemory
 from auto_memory_model.controller.base_controller import BaseController
-from auto_memory_model.utils import get_mention_to_cluster, get_ordered_mentions
+from auto_memory_model.utils import get_mention_to_cluster
+from red_utils.utils import get_doc_type
 
 
 class UnboundedMemController(BaseController):
@@ -75,7 +76,7 @@ class UnboundedMemController(BaseController):
             self.get_mention_embs_and_actions(example)
 
         if len(pred_mentions) > 0:
-            doc_type = example["doc_key"].split("/")[0]
+            doc_type = get_doc_type(example)
             action_prob_list, action_list = self.memory_net(
                 doc_type, mention_emb_list, gt_actions, pred_mentions,
                 teacher_forcing=teacher_forcing)  # , example[""])

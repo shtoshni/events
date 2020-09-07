@@ -55,7 +55,7 @@ def main():
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=50, type=int)
+                        help='Maximum number of epochs', default=30, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",
