@@ -18,7 +18,10 @@ class IndependentDocEncoder(BaseDocEncoder):
         num_chunks = len(text_length_list)
         attn_mask = get_sequence_mask(torch.tensor(text_length_list).cuda()).cuda().float()
 
-        with torch.no_grad():
+        if not self.finetune:
+            with torch.no_grad():
+                outputs = self.bert(document, attention_mask=attn_mask)  # C x L x E
+        else:
             outputs = self.bert(document, attention_mask=attn_mask)  # C x L x E
 
         encoded_layers = outputs[2]

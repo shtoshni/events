@@ -92,7 +92,7 @@ def main():
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
-    parser.add_argument('-ft_init_lr', help="Fine-tuning learning rate",
+    parser.add_argument('-ft_lr', help="Fine-tuning learning rate",
                         default=2e-5, type=float)
     parser.add_argument('-no_singletons', help="No singletons.",
                         default=True, action="store_true")
@@ -110,7 +110,7 @@ def main():
                 'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
                 'use_srl', 'include_singletons',  # SRL vector
                 'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
-                'max_epochs', 'dropout_rate', 'seed', 'init_lr',
+                'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetuning', 'ft_lr',
                 'focus_group',  # Mentions of particular focus
                 'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt", 'sample_singletons' # Training params
                 ]

@@ -7,6 +7,7 @@ import torch
 import json
 from collections import defaultdict, OrderedDict
 import numpy as np
+from transformers import get_linear_schedule_with_warmup
 from torch.utils.tensorboard import SummaryWriter
 
 from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
@@ -14,9 +15,8 @@ from red_utils.utils import load_data
 from coref_utils.utils import mention_to_cluster
 from coref_utils.metrics import CorefEvaluator
 import pytorch_utils.utils as utils
-from auto_memory_model.controller.lfm_controller import LearnedFixedMemController
-from auto_memory_model.controller.lru_controller import LRUController
-from auto_memory_model.controller.um_controller import UnboundedMemController
+from auto_memory_model.controller import LearnedFixedMemController, LRUController, UnboundedMemController
+
 
 EPS = 1e-8
 NUM_STUCK_EPOCHS = 20
@@ -28,7 +28,8 @@ class Experiment:
                  model_dir=None, best_model_dir=None,
                  # Model params
                  focus_group='joint',
-                 seed=0, init_lr=1e-3, max_gradient_norm=5.0,
+                 seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False,
+                 max_gradient_norm=1.0,
                  max_epochs=20, max_segment_len=128, eval=False, num_train_docs=None,
                  mem_type=False,
                  no_singletons=False,
@@ -65,13 +66,17 @@ class Experiment:
         self.best_model_path = path.join(best_model_dir, 'model.pth')
 
         # Initialize model and training metadata
+        self.finetune = finetune
         if mem_type == 'learned':
             self.model = LearnedFixedMemController(focus_group=focus_group, **kwargs).cuda()
         elif mem_type == 'lru':
             self.model = LRUController(focus_group=focus_group, **kwargs).cuda()
         elif mem_type == 'unbounded':
             self.model = UnboundedMemController(focus_group=focus_group, **kwargs).cuda()
-        self.initialize_setup(init_lr=init_lr)
+
+        self.train_info, self.optimizer, self.optim_scheduler = {}, {}, {}
+
+        self.initialize_setup(init_lr=init_lr, ft_lr=ft_lr)
         utils.print_model_info(self.model)
         sys.stdout.flush()
 
@@ -82,14 +87,20 @@ class Experiment:
         # Finally evaluate model
         self.final_eval()
 
-    def initialize_setup(self, init_lr, lr_decay=10):
+    def initialize_setup(self, init_lr, ft_lr=5e-5):
         """Initialize model and training info."""
-        self.train_info = {}
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(), lr=init_lr, eps=1e-6)
-        self.optim_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.1, patience=3,
+        self.optimizer['mem'] = torch.optim.AdamW(
+            self.model.memory_net.parameters(), lr=init_lr, eps=1e-6)
+        self.optim_scheduler['mem'] = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer['mem'], mode='min', factor=0.1, patience=3,
             min_lr=0.1 * init_lr, verbose=True)
+
+        if self.finetune:
+            self.optimizer['doc'] = torch.optim.Adam(
+                self.model.doc_encoder.parameters(), lr=ft_lr, eps=1e-6)
+            self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
+                self.optimizer['doc'], num_warmup_steps=len(self.train_examples) * min(5, self.max_epochs),
+                num_training_steps=self.max_epochs * len(self.train_examples))
         self.train_info['epoch'] = 0
         self.train_info['val_perf'] = 0.0
         self.train_info['global_steps'] = 0

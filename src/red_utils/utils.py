@@ -16,7 +16,7 @@ def load_data(data_dir, max_segment_len, dataset='red'):
 
     if dataset == 'red':
         assert(len(train_data) == 76)
-        assert(len(dev_data) == 9)
+        assert(len(dev_data) >= 8)
         assert(len(test_data) == 10)
 
     return train_data, dev_data, test_data

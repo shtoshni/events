@@ -30,7 +30,10 @@ class OverlapDocEncoder(BaseDocEncoder):
         num_chunks = len(sent_len_list)
         attn_mask = get_sequence_mask(torch.tensor(sent_len_list).cuda()).cuda().float()
 
-        with torch.no_grad():
+        if not self.finetune:
+            with torch.no_grad():
+                outputs = self.bert(doc_tens, attention_mask=attn_mask)  # C x L x E
+        else:
             outputs = self.bert(doc_tens, attention_mask=attn_mask)  # C x L x E
 
         encoded_layers = outputs[2]
