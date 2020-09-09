@@ -8,7 +8,6 @@ import json
 from collections import defaultdict, OrderedDict
 import numpy as np
 from transformers import get_linear_schedule_with_warmup
-from torch.utils.tensorboard import SummaryWriter
 
 from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
 from red_utils.utils import load_data
@@ -24,18 +23,18 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 
 class Experiment:
-    def __init__(self, data_dir=None, conll_data_dir=None,
+    def __init__(self, args, data_dir=None, conll_data_dir=None,
                  model_dir=None, best_model_dir=None,
                  # Model params
                  focus_group='joint',
-                 seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False,
+                 seed=0, init_lr=5e-4, ft_lr=2e-5, finetune=False,
                  max_gradient_norm=1.0,
                  max_epochs=20, max_segment_len=128, eval=False, num_train_docs=None,
-                 mem_type=False,
-                 no_singletons=False,
+                 mem_type='unbounded', no_singletons=False,
                  # Other params
-                 slurm_id=None, conll_scorer=None, **kwargs):
+                 slurm_id=None, **kwargs):
 
+        self.args = args
         # Set the random seed first
         self.seed = seed
         # Prepare data info
@@ -52,12 +51,7 @@ class Experiment:
         self.focus_group = focus_group
 
         self.slurm_id = slurm_id
-        self.conll_scorer = conll_scorer
 
-        if not slurm_id:
-            # Initialize Summary Writer
-            self.writer = SummaryWriter(path.join(model_dir, "logs"),
-                                        max_queue=500)
         # Get model paths
         self.model_dir = model_dir
         self.data_dir = data_dir
@@ -95,21 +89,21 @@ class Experiment:
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 if 'bert' in name:
-                    if ('LayerNorm' not in name) and ('layer_norm' not in name) and ('bias' not in name):
-                        bert_params.append(param)
+                    # if ('LayerNorm' not in name) and ('layer_norm' not in name) and ('bias' not in name):
+                    bert_params.append(param)
                 else:
                     other_params.append(param)
 
+        total_steps = self.max_epochs * len(self.train_examples)
+
         self.optimizer['mem'] = torch.optim.AdamW(
             other_params, lr=init_lr, eps=1e-6)
-        self.optim_scheduler['mem'] = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer['mem'], mode='min', factor=0.1, patience=3,
-            min_lr=0.1 * init_lr, verbose=True)
-
+        self.optim_scheduler['mem'] = get_linear_schedule_with_warmup(
+                self.optimizer['mem'], num_warmup_steps=int(0.1 * total_steps),
+                num_training_steps=total_steps)
         if self.finetune:
-            self.optimizer['doc'] = torch.optim.Adam(
+            self.optimizer['doc'] = torch.optim.AdamW(
                 bert_params, lr=ft_lr, eps=1e-6)
-            total_steps = self.max_epochs * len(self.train_examples)
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=int(0.1 * total_steps),
                 num_training_steps=total_steps)
@@ -132,8 +126,6 @@ class Experiment:
         epochs_done = self.train_info['epoch']
         optimizer = self.optimizer
         scheduler = self.optim_scheduler
-        if not self.slurm_id:
-            writer = self.writer
 
         if self.train_info['num_stuck_epochs'] >= NUM_STUCK_EPOCHS:
             return
@@ -162,8 +154,6 @@ class Experiment:
                     print(f"Weird thing - {total_loss}")
                     continue
                 batch_loss += total_loss.item()
-                if not self.slurm_id:
-                    writer.add_scalar("Loss/Total", total_loss, self.train_info['global_steps'])
 
                 if torch.isnan(total_loss):
                     print("Loss is NaN")
@@ -179,8 +169,10 @@ class Experiment:
 
                 for key in optimizer:
                     optimizer[key].step()
-                if self.finetune:
-                    scheduler['doc'].step()
+                    scheduler[key].step()
+                # if self.finetune:
+                #     scheduler['doc'].step()
+                #     scheduler['mem'].step()
 
                 if self.train_info['global_steps'] % 10 == 0:
                     max_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
@@ -192,12 +184,8 @@ class Experiment:
             # Update epochs done
             self.train_info['epoch'] = epoch + 1
 
-            # Evaluate auto regressive performance on dev set
-            val_loss = self.eval_auto_reg()
-            scheduler['mem'].step(val_loss)
-
             # Dev performance
-            fscore = self.eval_model()
+            fscore = self.eval_model()['fscore']
 
             # Assume that the model didn't improve
             self.train_info['num_stuck_epochs'] += 1
@@ -214,52 +202,13 @@ class Experiment:
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
-            logging.info("Epoch: %d, F1: %.1f, Max F1: %.1f, Time: %.2f, Loss: %.3f, Val Loss: %.3f"
-                         % (epoch + 1, fscore, self.train_info['val_perf'], elapsed_time,
-                            batch_loss/len(self.train_examples), val_loss))
+            logging.info("Epoch: %d, F1: %.1f, Max F1: %.1f, Time: %.2f"
+                         % (epoch + 1, fscore, self.train_info['val_perf'], elapsed_time))
 
             sys.stdout.flush()
-            if not self.slurm_id:
-                self.writer.flush()
 
             if self.train_info['num_stuck_epochs'] >= NUM_STUCK_EPOCHS:
                 return
-
-    def eval_auto_reg(self):
-        """Train model"""
-        model = self.model
-        model.eval()
-        errors = OrderedDict([("WL", 0), ("FN", 0), ("WF", 0),
-                              ("WO", 0), ("FL", 0), ("C", 0)])
-        batch_loss = 0
-        pred_class_counter, gt_class_counter = defaultdict(int), defaultdict(int)
-        corr_actions, total_actions = 0, 0
-        with torch.no_grad():
-            for example in self.dev_examples:
-                output = model(example, teacher_forcing=True)
-                if output is None:
-                    continue
-                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = output
-                batch_errors = classify_errors(pred_action_list, gt_actions)
-                for key in errors:
-                    errors[key] += batch_errors[key]
-
-                for pred_action, gt_action in zip(pred_action_list, gt_actions):
-                    pred_class_counter[pred_action[1]] += 1
-                    gt_class_counter[gt_action[1]] += 1
-
-                    if tuple(pred_action) == tuple(gt_action):
-                        corr_actions += 1
-
-                total_actions += len(gt_actions)
-                total_loss = loss['coref']
-                batch_loss += total_loss.item()
-
-        # logging.info("Val loss: %.3f" % batch_loss)
-        logging.info("Dev: %s", str(errors))
-        logging.info("(Teacher forced) Action accuracy: %.3f", corr_actions/total_actions)
-        model.train()
-        return batch_loss/len(self.dev_examples)
 
     def eval_model(self, split='dev'):
         """Eval model"""
@@ -337,26 +286,31 @@ class Experiment:
 
                     log_f.write(json.dumps(log_example) + "\n")
 
-                relv_fscore = 0
+                result_dict = {}
                 # Print individual metrics
                 for focus_group in evaluator_dict:
                     indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
                     perf_str = ""
+                    result_dict[focus_group] = {}
                     for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator_dict[focus_group].evaluators):
-                        perf_str += ", " + indv_metric + ": {:.1f}".format(indv_evaluator.get_f1() * 100)
+                        metric_num = indv_evaluator.get_f1() * 100
+                        perf_str += ", " + indv_metric + ": {:.1f}".format(metric_num)
+                        result_dict[focus_group][indv_metric] = metric_num
 
                     prec, rec, fscore = evaluator_dict[focus_group].get_prf()
                     fscore = fscore * 100
+                    result_dict[focus_group]['fscore'] = fscore
                     if self.focus_group == focus_group:
-                        relv_fscore = fscore
+                        result_dict['fscore'] = fscore
                     logging.info(focus_group.capitalize())
-                    logging.info("F-score: %.1f %s" % (fscore, perf_str))
-                    logging.info("Oracle F-score: %.2f\n" % (oracle_evaluator_dict[focus_group].get_prf()[2]))
+                    if split != 'test':
+                        logging.info("F-score: %.1f %s" % (fscore, perf_str))
+                        logging.info("Oracle F-score: %.2f\n" % (oracle_evaluator_dict[focus_group].get_prf()[2]))
 
                 # logging.info("Action accuracy: %.3f" % (corr_actions/total_actions))
                 logging.info(log_file)
 
-        return relv_fscore
+        return result_dict
 
     def final_eval(self):
         """Evaluate the model on train, dev, and test"""
@@ -365,30 +319,31 @@ class Experiment:
         logging.info("Loading best model after epoch: %d" %
                      self.train_info['epoch'])
 
-        perf_file = path.join(self.model_dir, "perf.txt")
+        perf_file = path.join(self.model_dir, "perf.json")
         if self.slurm_id:
             parent_dir = path.dirname(path.normpath(self.model_dir))
             perf_dir = path.join(parent_dir, "perf")
             if not path.exists(perf_dir):
                 os.makedirs(perf_dir)
-            perf_file = path.join(perf_dir, self.slurm_id + ".txt")
+            perf_file = path.join(perf_dir, self.slurm_id + ".json")
 
-        with open(perf_file, 'w') as f:
-            for split in ['Train', 'Dev']:  # , 'Test']:
-                logging.info('\n')
-                logging.info('%s' % split)
-                split_f1 = self.eval_model(split.lower())
-                logging.info('Calculated F1: %.3f' % split_f1)
+        output_dict = {'model_dir': self.model_dir}
+        for key, val in vars(self.args).items():
+            output_dict[key] = val
 
-                f.write("%s\t%.4f\n" % (split, split_f1))
-                if not self.slurm_id:
-                    self.writer.add_scalar(
-                        "F-score/{}".format(split), split_f1)
-            logging.info("Final performance summary at %s" % perf_file)
+        for split in ['train', 'dev', 'test']:  # , 'Test']:
+            logging.info('\n')
+            logging.info('%s' % split.capitalize())
+            result_dict = self.eval_model(split)
+            if split != 'test':
+                logging.info('Calculated F1: %.3f' % result_dict['fscore'])
 
+            output_dict[split] = result_dict
+
+        json.dump(output_dict, open(perf_file, 'w'), indent=2)
+
+        logging.info("Final performance summary at %s" % perf_file)
         sys.stdout.flush()
-        if not self.slurm_id:
-            self.writer.close()
 
     def load_model(self, location, model_type='last'):
         checkpoint = torch.load(location)

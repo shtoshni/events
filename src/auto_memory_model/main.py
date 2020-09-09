@@ -24,17 +24,11 @@ def main():
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
         '-dataset', default='red', choices=['red'], type=str)
-    parser.add_argument(
-        '-conll_scorer', type=str, help='Root folder storing model runs',
-        default="/home/shtoshni/Research/litbank_coref/lrec2020-coref/"
-        "reference-coreference-scorers/scorer.pl")
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
-    # parser.add_argument('-all_truecase', default=True,
-    #                     action="store_true", help='All documents processed through truecase.')
     parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/litbank_coref/resources", type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
@@ -104,7 +98,7 @@ def main():
     opt_dict = OrderedDict()
     # Only include important options in hash computation
     imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # Encoder params
-                'mem_type', 'num_cells', 'mem_size', 'mlp_size', 'mlp_depth', 'emb_size',  # Memory params
+                'mem_type', 'num_cells', 'mem_size', 'mlp_size', 'mlp_depth',  # Memory params
                 'use_srl', 'include_singletons',  # SRL vector
                 'focus_group',  # Mentions of particular focus
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
@@ -142,7 +136,7 @@ def main():
             logging.info('%s: %s' % (key, val))
             f.write('%s: %s\n' % (key, val))
 
-    Experiment(**vars(args))
+    Experiment(args, **vars(args))
 
 
 if __name__ == "__main__":
