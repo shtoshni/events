@@ -1,12 +1,11 @@
 import argparse
-import os
 from os import path
 import hashlib
 import logging
-import subprocess
 from collections import OrderedDict
+from pytorch_lightning import Trainer
 
-from auto_memory_model.experiment import Experiment
+from lightning_mem_model.lightning_experiment import experiment
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
@@ -24,10 +23,6 @@ def main():
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
         '-dataset', default='red', choices=['red'], type=str)
-    parser.add_argument(
-        '-conll_scorer', type=str, help='Root folder storing model runs',
-        default="/home/shtoshni/Research/litbank_coref/lrec2020-coref/"
-        "reference-coreference-scorers/scorer.pl")
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
@@ -44,7 +39,7 @@ def main():
     parser.add_argument('-max_span_width', default=20, type=int,
                         help='Max span width.')
     parser.add_argument('-ment_emb', default='endpoint', choices=['attn', 'endpoint'],
-                        type=str, help='If true use an RNN on top of mention embeddings.')
+                        type=str, help='Mention embedding type, attention adds an additional term corr. to whole span.')
     parser.add_argument('-focus_group', default='joint', choices=['joint', 'entity', 'event'], type=str,
                         help='Mentions in focus. If both, the cluster all mentions, otherwise cluster particular type'
                              ' of mentions.')
@@ -65,15 +60,10 @@ def main():
                         help='Number of hidden layers in Coref MLP')
     parser.add_argument('-mlp_depth', default=1, type=int,
                         help='Number of hidden layers in other MLPs')
-    parser.add_argument('-entity_rep', default='avg', type=str,
-                        choices=['lstm', 'gru', 'max', 'avg'],
-                        help='Entity representation.')
     parser.add_argument('-use_srl', default=False, action="store_true",
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
     parser.add_argument('-emb_size', default=20, type=int,
                         help='Embedding size of features.')
-    parser.add_argument('-use_last_mention', default=False, action="store_true",
-                        help="Use last mention along with the global features if True.")
 
     # Training params
     parser.add_argument('-new_ent_wt', help='Weight of new entity term in coref loss',
@@ -103,18 +93,19 @@ def main():
     parser.add_argument('-slurm_id', help="Slurm ID",
                         default=None, type=str)
 
+    parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
     imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # Encoder params
-                'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
+                'mem_type', 'num_cells', 'mem_size', 'mlp_size', 'mlp_depth',
                 'use_srl', 'include_singletons',  # SRL vector
-                'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
-                'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr',
+                'coref_mlp_depth', 'emb_size',  # Memory params
+                'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr',  # Training params
+                'dataset', 'num_train_docs', 'over_loss_wt', "new_ent_wt", 'sample_singletons',  # Training params
                 'focus_group',  # Mentions of particular focus
-                'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt", 'sample_singletons' # Training params
                 ]
     for key, val in vars(args).items():
         if key in imp_opts:
@@ -124,31 +115,15 @@ def main():
     hash_idx = hashlib.md5(str_repr.encode("utf-8")).hexdigest()
     model_name = "events_" + str(hash_idx)
 
-    model_dir = path.join(args.base_model_dir, model_name)
-    args.model_dir = model_dir
-    best_model_dir = path.join(model_dir, 'best_models')
-    args.best_model_dir = best_model_dir
-    if not path.exists(model_dir):
-        os.makedirs(model_dir)
-    if not path.exists(best_model_dir):
-        os.makedirs(best_model_dir)
+    args.save_dir = args.weights_save_path if args.weights_save_path is not None else args.base_model_dir
+    args.model_name = model_name
 
     # doc_enc = args.doc_enc + ('_truecase' if args.all_truecase else '')
     doc_enc = args.doc_enc + ('_singleton' if args.include_singletons else '')
     args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{doc_enc}')
     print(args.data_dir)
-    # Log directory for Tensorflow Summary
-    log_dir = path.join(model_dir, "logs")
-    if not path.exists(log_dir):
-        os.makedirs(log_dir)
 
-    config_file = path.join(model_dir, 'config')
-    with open(config_file, 'w') as f:
-        for key, val in opt_dict.items():
-            logging.info('%s: %s' % (key, val))
-            f.write('%s: %s\n' % (key, val))
-
-    Experiment(**vars(args))
+    experiment(args)
 
 
 if __name__ == "__main__":

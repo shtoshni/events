@@ -90,18 +90,29 @@ class Experiment:
 
     def initialize_setup(self, init_lr, ft_lr=5e-5):
         """Initialize model and training info."""
+        other_params = []
+        bert_params = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if 'bert' in name:
+                    if ('LayerNorm' not in name) and ('layer_norm' not in name) and ('bias' not in name):
+                        bert_params.append(param)
+                else:
+                    other_params.append(param)
+
         self.optimizer['mem'] = torch.optim.AdamW(
-            self.model.memory_net.parameters(), lr=init_lr, eps=1e-6)
+            other_params, lr=init_lr, eps=1e-6)
         self.optim_scheduler['mem'] = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer['mem'], mode='min', factor=0.1, patience=3,
             min_lr=0.1 * init_lr, verbose=True)
 
         if self.finetune:
             self.optimizer['doc'] = torch.optim.Adam(
-                self.model.doc_encoder.parameters(), lr=ft_lr, eps=1e-6)
+                bert_params, lr=ft_lr, eps=1e-6)
+            total_steps = self.max_epochs * len(self.train_examples)
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
-                self.optimizer['doc'], num_warmup_steps=len(self.train_examples) * min(5, self.max_epochs),
-                num_training_steps=self.max_epochs * len(self.train_examples))
+                self.optimizer['doc'], num_warmup_steps=int(0.1 * total_steps),
+                num_training_steps=total_steps)
         self.train_info['epoch'] = 0
         self.train_info['val_perf'] = 0.0
         self.train_info['global_steps'] = 0
@@ -174,7 +185,7 @@ class Experiment:
                 if self.train_info['global_steps'] % 10 == 0:
                     max_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
                     print(example["doc_key"], '{:.3f}, Max memory {:.3f}'.format(total_loss.item(), max_mem))
-                    torch.cuda.reset_max_memory_allocated()
+                    torch.cuda.reset_peak_memory_stats()
 
             sys.stdout.flush()
             logging.info(errors)
@@ -349,7 +360,7 @@ class Experiment:
     def final_eval(self):
         """Evaluate the model on train, dev, and test"""
         # Test performance  - Load best model
-        self.load_model(self.best_model_path)
+        self.load_model(self.best_model_path, model_type='best')
         logging.info("Loading best model after epoch: %d" %
                      self.train_info['epoch'])
 
@@ -378,15 +389,16 @@ class Experiment:
         if not self.slurm_id:
             self.writer.close()
 
-    def load_model(self, location):
+    def load_model(self, location, model_type='last'):
         checkpoint = torch.load(location)
         self.model.load_state_dict(checkpoint['model'], strict=False)
-        param_groups = ['mem', 'doc'] if self.finetune else ['mem']
-        for param_group in param_groups:
-            self.optimizer[param_group].load_state_dict(
-                checkpoint['optimizer'][param_group])
-            self.optim_scheduler[param_group].load_state_dict(
-                checkpoint['scheduler'][param_group])
+        if model_type != 'best':
+            param_groups = ['mem', 'doc'] if self.finetune else ['mem']
+            for param_group in param_groups:
+                self.optimizer[param_group].load_state_dict(
+                    checkpoint['optimizer'][param_group])
+                self.optim_scheduler[param_group].load_state_dict(
+                    checkpoint['scheduler'][param_group])
         self.train_info = checkpoint['train_info']
         torch.set_rng_state(checkpoint['rng_state'])
         np.random.set_state(checkpoint['np_rng_state'])

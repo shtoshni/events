@@ -50,7 +50,6 @@ class UnboundedMemController(BaseController):
             if idx == 0:
                 continue
 
-            gt_idx = None
             if action_str == 'c':
                 gt_idx = cell_idx
             else:
