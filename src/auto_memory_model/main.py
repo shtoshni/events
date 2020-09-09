@@ -63,7 +63,7 @@ def main():
                         help='MLP size used in the model')
     parser.add_argument('-mlp_depth', default=1, type=int,
                         help='Number of hidden layers in other MLPs')
-    parser.add_argument('-use_srl', default=False, action="store_true",
+    parser.add_argument('-use_srl', default=None, choices=['joint', 'event'], type=str,
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
     parser.add_argument('-emb_size', default=20, type=int,
                         help='Embedding size of features.')
@@ -82,7 +82,7 @@ def main():
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.1, type=float)
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=30, type=int)
+                        help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",

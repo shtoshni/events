@@ -17,10 +17,6 @@ class UnboundedMemController(BaseController):
             drop_module=self.drop_module, **kwargs)
         # Set loss functions
         self.loss_fn = {}
-        if self.training:
-            self.label_smoothing_fn = LabelSmoothingLoss(smoothing=self.label_smoothing_wt, dim=0)
-        else:
-            self.label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
 
     @staticmethod
     def get_actions(mentions, clusters):
@@ -62,22 +58,14 @@ class UnboundedMemController(BaseController):
                 gt_idx = num_cells
                 num_cells += 1
 
-
-            # print(target, logit_tens.shape)
-            weight = torch.ones_like(action_prob_list[idx]).float().cuda()
-            weight[-1] = self.new_ent_wt
-
-            # logit_tens = torch.unsqueeze(action_prob_list[idx], dim=0)
-            # target = torch.tensor([gt_idx]).cuda()
-            # coref_loss += torch.nn.functional.cross_entropy(input=logit_tens, target=target, weight=weight)
-
-            # logit_tens = action_prob_list[idx]
-            # smoothing_term = 0.1
-            # target = torch.ones_like(logit_tens).cuda() * (smoothing_term/logit_tens.shape[0])
-            # target[gt_idx] = 1 - smoothing_term
-            #
-            # coref_loss += torch.mean(torch.sum(-target * logit_tens))
-            coref_loss += self.label_smoothing_fn(action_prob_list[idx], torch.tensor([gt_idx]).cuda())
+            # weight = torch.ones_like(action_prob_list[idx]).float().cuda()
+            # weight[-1] = self.new_ent_wt
+            weight = None
+            if self.training:
+                label_smoothing_fn = LabelSmoothingLoss(smoothing=self.label_smoothing_wt, dim=0)
+            else:
+                label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
+            coref_loss += label_smoothing_fn(action_prob_list[idx], torch.tensor([gt_idx]).cuda(), weight=weight)
 
         return coref_loss
 

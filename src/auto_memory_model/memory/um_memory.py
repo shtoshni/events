@@ -60,7 +60,7 @@ class UnboundedMemory(BaseMemory):
             if ment_idx == 0:
                 # We start with a single empty memory cell
                 self.mem = torch.unsqueeze(query_vector, dim=0)
-                if self.use_srl:
+                if self.use_srl and srl_vec is not None:
                     self.srl_mem = torch.unsqueeze(srl_vec, dim=0)
                 self.ent_counter = torch.tensor([1.0]).cuda()
                 self.last_mention_idx[0] = 0
@@ -104,7 +104,7 @@ class UnboundedMemory(BaseMemory):
                                     + rep_query_vector)
                     avg_pool_vec = pool_vec_num/total_counts
                     self.mem = self.mem * (1 - mask) + mask * avg_pool_vec
-                    if self.use_srl:
+                    if self.use_srl and srl_vec is not None:
                         pool_vec_num = (self.srl_mem * torch.unsqueeze(self.ent_counter, dim=1)
                                         + srl_vec)
                         avg_pool_vec = pool_vec_num / total_counts
@@ -117,7 +117,7 @@ class UnboundedMemory(BaseMemory):
                 elif action_str == 'o':
                     # Append the new vector
                     self.mem = torch.cat([self.mem, torch.unsqueeze(query_vector, dim=0)], dim=0)
-                    if self.use_srl:
+                    if self.use_srl and srl_vec is not None:
                         self.srl_mem = torch.cat([self.srl_mem, torch.unsqueeze(srl_vec, dim=0)], dim=0)
                     self.ent_counter = torch.cat([self.ent_counter, torch.tensor([1.0]).cuda()], dim=0)
                     self.last_mention_idx = torch.cat([self.last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)

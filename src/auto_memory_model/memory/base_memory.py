@@ -3,7 +3,7 @@ import torch.nn as nn
 import math
 
 from pytorch_utils.modules import MLP
-from red_utils.constants import DOC_TYPE_TO_IDX
+from red_utils.constants import DOC_TYPE_TO_IDX, ELEM_TYPE_TO_IDX
 
 
 LOG2 = math.log(2)
@@ -48,7 +48,7 @@ class BaseMemory(nn.Module):
         self.doc_type_emb = nn.Embedding(3, self.emb_size)
         self.last_action_emb = nn.Embedding(4, self.emb_size)
         self.distance_embeddings = nn.Embedding(11, self.emb_size)
-        self.width_embeddings = nn.Embedding(10, self.emb_size)
+        self.width_embeddings = nn.Embedding(20, self.emb_size)
         self.counter_embeddings = nn.Embedding(11, self.emb_size)
 
     @staticmethod
@@ -85,6 +85,7 @@ class BaseMemory(nn.Module):
 
     def get_last_action_emb(self, action_str):
         action_emb = self.action_str_to_idx[action_str]
+        # print(action_str)
         return self.last_action_emb(torch.tensor(action_emb).cuda())
 
     @staticmethod
@@ -119,17 +120,20 @@ class BaseMemory(nn.Module):
 
         srl_vec, use_srl_mask = None, None
         if self.use_srl:
-            # SRL vec
-            srl_vec, use_srl_mask = self.get_srl_role_vec(
-                query_vector, ment_type, distance_embs, counter_embs)
-            if use_srl_mask:
-                rep_srl_vec = srl_vec.repeat(num_cells, 1)
-                pair_vec = torch.cat([self.srl_mem, rep_srl_vec, self.srl_mem * rep_srl_vec,
-                                      distance_embs, counter_embs], dim=-1)
-                # srl_mask = self.get_srl_mask(self.ent_counter, ment_type, self.cluster_type)
-                srl_score = self.srl_coref_mlp(pair_vec) # * srl_mask
+            if (self.use_srl == 'joint') or ((self.use_srl == 'event') and (ment_type == ELEM_TYPE_TO_IDX['EVENT'])):
+                # SRL vec
+                srl_vec, use_srl_mask = self.get_srl_role_vec(
+                    query_vector, ment_type, distance_embs, counter_embs)
+                if use_srl_mask:
+                    rep_srl_vec = srl_vec.repeat(num_cells, 1)
+                    pair_vec = torch.cat([self.srl_mem, rep_srl_vec, self.srl_mem * rep_srl_vec,
+                                          distance_embs, counter_embs], dim=-1)
+                    # srl_mask = self.get_srl_mask(self.ent_counter, ment_type, self.cluster_type)
+                    srl_score = self.srl_coref_mlp(pair_vec)  # * srl_mask
 
-                pair_score += srl_score
+                    pair_score += srl_score
+            else:
+                srl_vec = torch.zeros_like(query_vector)
 
         coref_score = torch.squeeze(pair_score, dim=-1)  # M
 
