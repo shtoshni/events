@@ -12,7 +12,7 @@ class BaseController(nn.Module):
     def __init__(self,
                  dropout_rate=0.5, max_span_width=20, focus_group='both',
                  ment_emb='endpoint', doc_enc='independent',
-                 sample_singletons=1.0,
+                 sample_singletons=1.0, label_smoothing_wt=0.1,
                  **kwargs):
         super(BaseController, self).__init__()
         self.max_span_width = max_span_width
@@ -26,8 +26,10 @@ class BaseController(nn.Module):
         self.drop_module = nn.Dropout(p=dropout_rate, inplace=False)
         self.ment_emb = ment_emb
         self.focus_group = focus_group
-        self.sample_singletons = sample_singletons
         self.ment_emb_to_size_factor = {'attn': 3, 'endpoint': 2, 'max': 1}
+
+        self.sample_singletons = sample_singletons
+        self.label_smoothing_wt = label_smoothing_wt
 
         if self.ment_emb == 'attn':
             self.mention_attn = nn.Linear(self.hsize, 1)

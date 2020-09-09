@@ -198,8 +198,6 @@ class Experiment:
 
             # Dev performance
             fscore = self.eval_model()
-            # Save model
-            self.save_model(self.model_path)
 
             # Assume that the model didn't improve
             self.train_info['num_stuck_epochs'] += 1
@@ -210,6 +208,9 @@ class Experiment:
                 self.train_info['val_perf'] = fscore
                 logging.info('Saving best model')
                 self.save_model(self.best_model_path, model_type='best')
+
+            # Save last model
+            self.save_model(self.model_path)
 
             # Get elapsed time
             elapsed_time = time.time() - start_time

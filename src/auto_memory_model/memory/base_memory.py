@@ -10,9 +10,8 @@ LOG2 = math.log(2)
 
 
 class BaseMemory(nn.Module):
-    def __init__(self, hsize=300, mlp_size=200, mlp_depth=1, coref_mlp_depth=1,
-                 mem_size=None, drop_module=None, emb_size=20, entity_rep='max',
-                 use_last_mention=False, use_srl=False,
+    def __init__(self, hsize=300, mlp_size=200, mlp_depth=1,
+                 mem_size=None, drop_module=None, emb_size=20, use_srl=False,
                  **kwargs):
         super(BaseMemory, self).__init__()
         # self.query_mlp = query_mlp
@@ -21,9 +20,9 @@ class BaseMemory(nn.Module):
         # if self.use_srl:
         #     self.mem_size = 2 * self.mem_size
         self.mlp_size = mlp_size
-        self.mlp_depth = mlp_depth
         self.emb_size = emb_size
-        self.entity_rep = entity_rep
+        self.mlp_depth = mlp_depth
+
         self.use_srl = use_srl
 
         self.drop_module = drop_module
@@ -33,25 +32,23 @@ class BaseMemory(nn.Module):
 
         self.doc_type_to_idx = DOC_TYPE_TO_IDX
 
-        self.use_last_mention = use_last_mention
-
         # CHANGE THIS PART
         self.query_projector = nn.Linear(self.hsize + 4 * self.emb_size, self.mem_size)
 
         self.mem_coref_mlp = MLP(3 * self.mem_size + 2 * self.emb_size, self.mlp_size, 1,
-                                 num_hidden_layers=coref_mlp_depth, bias=True, drop_module=drop_module)
+                                 num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
 
         if self.use_srl:
             self.srl_role_mlp = MLP(3 * self.mem_size + 2 * self.emb_size, self.mlp_size, 1,
-                                    num_hidden_layers=coref_mlp_depth, bias=True, drop_module=drop_module)
+                                    num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
             self.srl_coref_mlp = MLP(3 * self.mem_size + 2 * self.emb_size, self.mlp_size, 1,
-                                     num_hidden_layers=coref_mlp_depth, bias=True, drop_module=drop_module)
+                                     num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
 
         self.ment_type_emb = nn.Embedding(2, self.emb_size)
         self.doc_type_emb = nn.Embedding(3, self.emb_size)
         self.last_action_emb = nn.Embedding(4, self.emb_size)
         self.distance_embeddings = nn.Embedding(11, self.emb_size)
-        self.width_embeddings = nn.Embedding(20, self.emb_size)
+        self.width_embeddings = nn.Embedding(10, self.emb_size)
         self.counter_embeddings = nn.Embedding(11, self.emb_size)
 
     @staticmethod

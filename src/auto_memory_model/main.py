@@ -61,19 +61,12 @@ def main():
                         help='Memory size used in the model')
     parser.add_argument('-mlp_size', default=1024, type=int,
                         help='MLP size used in the model')
-    parser.add_argument('-coref_mlp_depth', default=1, type=int,
-                        help='Number of hidden layers in Coref MLP')
     parser.add_argument('-mlp_depth', default=1, type=int,
                         help='Number of hidden layers in other MLPs')
-    parser.add_argument('-entity_rep', default='avg', type=str,
-                        choices=['lstm', 'gru', 'max', 'avg'],
-                        help='Entity representation.')
     parser.add_argument('-use_srl', default=False, action="store_true",
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
     parser.add_argument('-emb_size', default=20, type=int,
                         help='Embedding size of features.')
-    parser.add_argument('-use_last_mention', default=False, action="store_true",
-                        help="Use last mention along with the global features if True.")
 
     # Training params
     parser.add_argument('-new_ent_wt', help='Weight of new entity term in coref loss',
@@ -86,6 +79,8 @@ def main():
                         help='Number of training docs.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
+    parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
+                        default=0.1, type=float)
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=30, type=int)
     parser.add_argument('-seed', default=0,
@@ -109,12 +104,11 @@ def main():
     opt_dict = OrderedDict()
     # Only include important options in hash computation
     imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # Encoder params
-                'mem_type', 'num_cells', 'mem_size', 'entity_rep', 'mlp_size', 'mlp_depth',
+                'mem_type', 'num_cells', 'mem_size', 'mlp_size', 'mlp_depth', 'emb_size',  # Memory params
                 'use_srl', 'include_singletons',  # SRL vector
-                'coref_mlp_depth', 'emb_size', 'use_last_mention',  # Memory params
-                'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr',
                 'focus_group',  # Mentions of particular focus
-                'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt", 'sample_singletons' # Training params
+                'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
+                'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt", 'sample_singletons',  # Training params
                 ]
     for key, val in vars(args).items():
         if key in imp_opts:
