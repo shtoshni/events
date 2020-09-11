@@ -85,15 +85,20 @@ class Experiment:
     def initialize_setup(self, init_lr, ft_lr=5e-5):
         """Initialize model and training info."""
         other_params = []
-        bert_params = []
+        bert_decay_params = []
+        bert_non_decay_params = []
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 if 'bert' in name:
-                    # if ('LayerNorm' not in name) and ('layer_norm' not in name) and ('bias' not in name):
-                    bert_params.append(param)
+                    if ('LayerNorm' not in name) and ('layer_norm' not in name) and ('bias' not in name):
+                        bert_decay_params.append(param)
+                    else:
+                        bert_non_decay_params.append(param)
                 else:
                     other_params.append(param)
 
+        # print(len(bert_non_decay_params))
+        # print(len(bert_decay_params))
         total_steps = self.max_epochs * len(self.train_examples)
 
         self.optimizer['mem'] = torch.optim.AdamW(
@@ -103,7 +108,10 @@ class Experiment:
                 num_training_steps=total_steps)
         if self.finetune:
             self.optimizer['doc'] = torch.optim.AdamW(
-                bert_params, lr=ft_lr, eps=1e-6)
+                bert_decay_params, lr=ft_lr, eps=1e-6)
+            self.optimizer['doc'].add_param_group(
+                {"params": bert_non_decay_params, "lr": ft_lr, "weight_decay": 0}
+            )
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=int(0.1 * total_steps),
                 num_training_steps=total_steps)

@@ -23,6 +23,6 @@ class MLP(nn.Module):
         self.layer_list.append(nn.Linear(cur_output_size, output_size, bias=bias))
         self.fc_layers = nn.Sequential(*self.layer_list)
 
-    def forward(self, mlp_input, dummy_input=None):
+    def forward(self, mlp_input):
         output = self.fc_layers(mlp_input)
         return output

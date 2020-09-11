@@ -5,7 +5,7 @@ from auto_memory_model.memory.um_memory import UnboundedMemory
 from auto_memory_model.controller.base_controller import BaseController
 from auto_memory_model.utils import get_mention_to_cluster
 from red_utils.utils import get_doc_type
-from pytorch_utils.label_smoothing import LabelSmoothingLoss
+from pytorch_utils.label_smoothing import LabelSmoothingLoss, LabelSmoothingLossOther
 
 
 class UnboundedMemController(BaseController):
@@ -62,9 +62,15 @@ class UnboundedMemController(BaseController):
             # weight[-1] = self.new_ent_wt
             weight = None
             if self.training:
-                label_smoothing_fn = LabelSmoothingLoss(smoothing=self.label_smoothing_wt, dim=0)
+                if self.label_smoothing_other:
+                    label_smoothing_fn = LabelSmoothingLossOther(smoothing=self.label_smoothing_wt, dim=0)
+                else:
+                    label_smoothing_fn = LabelSmoothingLoss(smoothing=self.label_smoothing_wt, dim=0)
             else:
-                label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
+                if self.label_smoothing_other:
+                    label_smoothing_fn = LabelSmoothingLossOther(smoothing=self.label_smoothing_wt, dim=0)
+                else:
+                    label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
             coref_loss += label_smoothing_fn(action_prob_list[idx], torch.tensor([gt_idx]).cuda(), weight=weight)
 
         return coref_loss

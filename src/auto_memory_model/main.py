@@ -75,6 +75,8 @@ def main():
                         help='Dropout rate')
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.1, type=float)
+    parser.add_argument('-label_smoothing_other', help='Type of label smoothing',
+                        default=False, action="store_true")
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
@@ -102,7 +104,8 @@ def main():
                 'use_srl', 'include_singletons',  # SRL vector
                 'focus_group',  # Mentions of particular focus
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
-                'dataset', 'num_train_docs', 'over_loss_wt',  "new_ent_wt", 'sample_singletons',  # Training params
+                'label_smoothing_other', 'dataset', 'num_train_docs', 'sample_singletons',
+                'over_loss_wt',  "new_ent_wt",  # Training params
                 ]
     for key, val in vars(args).items():
         if key in imp_opts:
