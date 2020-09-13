@@ -140,20 +140,66 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len)
     return document
 
 
-def tokenize_span(span, doc_name, tokenizer, all_truecase=False):
+def get_context(tokenizer, tokenized_doc):
+    newline_idx = None
+    for idx in range(len(tokenized_doc) - 1, -1, -1):
+        if tokenized_doc[idx] == NEWLINE_TOKEN:
+            newline_idx = idx
+            break
+
+    if newline_idx:
+        context = tokenized_doc[newline_idx + 1: ]
+    else:
+        context = tokenized_doc[0: ]
+
+    # Don't add more than 10 tokens in context
+    if len(context) > 20:
+        context = context[-20:]
+
+    context_str = tokenizer.convert_tokens_to_string(context)
+    return context_str
+
+
+def count_upper_case_chars(string):
+    count = 0
+    for char in string:
+        if char.isupper():
+            count += 1
+
+    return count
+
+
+def tokenize_span(span, doc_name, tokenizer, use_truecase=False, context=None):
+    span = span.strip()
+    if span == '':
+        return [], 0
+
     span = span.replace("\n", "<N>")
-    if all_truecase:
-        if span.upper() == span:
+    if use_truecase:
+        if (span.upper() == span) or ("proxy" in doc_name):
             # Only do it for all uppercase
-            span = truecase.get_true_case(span)
-    elif "proxy/" in doc_name:
-        span = truecase.get_true_case(span)
-    # if
+
+            just_trucase_span = truecase.get_true_case(span)
+            cand1 = just_trucase_span
+
+            truecase_span_len = len(just_trucase_span)
+            context_str = get_context(tokenizer, context)
+            input_str = context_str + " " + span
+            truecase_context_span = truecase.get_true_case(input_str)
+            cand2 = truecase_context_span[-truecase_span_len:]
+
+            if cand1.lower() == cand2.lower():
+                # Both options work, choose the option with least number of uppercase characters
+                span = cand1 if (count_upper_case_chars(cand1) <= count_upper_case_chars(cand2)) else cand2
+                # Weird Truecase error - "when Hindustan" becomes "When HINDUSTAN"
+            else:
+                span = cand1
+
     span = span.replace("<N>", NEWLINE_TOKEN)
     newline_count = span.count(NEWLINE_TOKEN)
 
     tokenized_span = tokenizer.tokenize(span)
-    # if ["[UNK]"] == tokenized_span:
+
     if "[UNK]" in tokenized_span:
         # Try cleaning the text and reprocess
         cleaned_span = clean(span, lower=False)
@@ -163,7 +209,7 @@ def tokenize_span(span, doc_name, tokenizer, all_truecase=False):
     return tokenized_span, newline_count
 
 
-def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase=False, add_duplicate_tag=False):
+def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, use_truecase=False, add_duplicate_tag=False):
     # Read the source document
     doc_str = "".join(open(source_file).readlines())
     # altered_doc_str = doc_str.replace("\n", "[NEWL]")
@@ -195,7 +241,7 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
                     # The shorted span has already been processed! "x" "x y" overlap
                     counter_idx, token_idx = char_to_tokenized_idx[span_start]
                     remaining_tokens, newline_count = tokenize_span(doc_str[char_offset: span_end], doc_name, tokenizer,
-                                                                    all_truecase=all_truecase)
+                                                                    use_truecase=use_truecase, context=tokenized_doc)
                     tokenized_doc.extend(remaining_tokens)
                     char_offset = span_end
                     # Don't count newline tokens as they will ultimately be removed.
@@ -217,7 +263,8 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
                     raise ValueError(doc_name)
             else:
                 before_span_str = doc_str[char_offset: span_start]
-                before_span_tokens, newline_count = tokenize_span(before_span_str, doc_name, tokenizer, all_truecase=all_truecase)
+                before_span_tokens, newline_count = tokenize_span(before_span_str, doc_name, tokenizer,
+                                                                  use_truecase=use_truecase, context=tokenized_doc)
                 tokenized_doc.extend(before_span_tokens)
 
                 # Don't count newline tokens as they will ultimately be removed.
@@ -226,7 +273,7 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
 
                 # Tokenize the span
                 span_tokens, newline_count = tokenize_span(doc_str[span_start: span_end], doc_name, tokenizer,
-                                                           all_truecase=all_truecase)
+                                                           use_truecase=use_truecase, context=tokenized_doc)
 
                 if ent_type != 'DUPLICATE':
                     ent_id_to_info[ent_id] = tuple([
@@ -249,7 +296,8 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
 
     # Add the tokens after the last span
     rem_doc = doc_str[char_offset:]
-    rem_tokens, newline_count = tokenize_span(rem_doc, doc_name, tokenizer, all_truecase=all_truecase)
+    rem_tokens, newline_count = tokenize_span(rem_doc, doc_name, tokenizer, use_truecase=use_truecase,
+                                              context=tokenized_doc)
     # Don't count newline tokens as they will ultimately be removed.
     token_counter += len(rem_tokens) - newline_count
 
@@ -275,7 +323,7 @@ def minimize_partition(split, tokenizer, args, seg_len):
                 zip(split_files, source_files, annotation_files):
             tokenized_doc, ent_id_to_info, clusters = tokenize_doc(
                 doc_name, tokenizer, source_file, annotation_file,
-                all_truecase=args.all_truecase, add_duplicate_tag=args.add_duplicate_tag)
+                use_truecase=args.use_truecase, add_duplicate_tag=args.add_duplicate_tag)
             document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len)
             output_file.write(json.dumps(document))
             output_file.write("\n")
@@ -297,7 +345,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir", type=str, help="Input directory root")
     parser.add_argument("output_dir", type=str, help="Output directory")
-    parser.add_argument("-all_truecase", default=True, action="store_true",
+    parser.add_argument("-use_truecase", default=True, action="store_true",
                         help="Pass all documents through truecase.")
     parser.add_argument("-add_duplicate_tag", default=False, action="store_true",
                         help="Add duplicate tag to indicate duplicated text.")

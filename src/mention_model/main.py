@@ -29,8 +29,8 @@ def main():
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
-    parser.add_argument('-proc_strategy', default=None, type=str,
-                        choices=['duplicate'], help='BERT model type')
+    parser.add_argument('-proc_strategy', default='duplicate', type=str,
+                        choices=['default', 'duplicate'], help='Data processing strategy.')
     parser.add_argument('-pretrained_bert_dir', default='../../../litbank_coref/resources/', type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
@@ -85,7 +85,7 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    doc_enc = args.doc_enc + (f'_{args.proc_strategy}' if args.proc_strategy else '')
+    doc_enc = args.doc_enc + (f'_{args.proc_strategy}' if args.proc_strategy != 'default' else '')
     args.data_dir = path.join(args.base_data_dir,
                               f'{args.dataset}/{doc_enc}')
     print(args.data_dir)

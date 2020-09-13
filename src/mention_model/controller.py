@@ -8,7 +8,7 @@ from document_encoder import IndependentDocEncoder, OverlapDocEncoder
 from pytorch_memlab import profile, set_target_gpu
 from red_utils.utils import get_doc_type
 
-ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.2, 'EVENT': 0.2}
+ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.25, 'EVENT': 0.2}
 
 
 class Controller(BaseController):
@@ -181,7 +181,7 @@ class Controller(BaseController):
                 if not self.training or teacher_forcing:
                     diff_vec = filt_gold_mentions - filt_gold_mentions * topk_indices_mask
                     if torch.sum(diff_vec):
-                        # print(example["doc_key"], ment_type, torch.sum(diff_vec))
+                        print(example["doc_key"], ment_type, torch.sum(diff_vec))
                         doc = []
                         for sentence in example["sentences"]:
                             doc.extend(sentence)
@@ -200,7 +200,7 @@ class Controller(BaseController):
                                 if span_type == ment_idx:
                                     span_tuple = (span_start, span_end)
                                     if span_tuple not in top_k_set:
-                                        # print(span_tuple, doc[span_start: span_end + 1])
+                                        print(span_tuple, doc[span_start: span_end + 1])
                                         pass
 
         if self.training:
