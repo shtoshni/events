@@ -69,7 +69,7 @@ class Experiment:
             self.model = UnboundedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
 
         self.max_epochs = max_epochs
-        self.train_info, self.optimizer, self.optim_scheduler = {}, {}, {}
+        self.train_info, self.optimizer, self.optim_scheduler, self.optimizer_params = {}, {}, {}, {}
 
         self.initialize_setup(init_lr=init_lr, ft_lr=ft_lr)
         utils.print_model_info(self.model)
@@ -90,10 +90,10 @@ class Experiment:
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 if 'bert' in name:
-                    if ('LayerNorm' not in name) and ('layer_norm' not in name) and ('bias' not in name):
-                        bert_decay_params.append(param)
-                    else:
+                    if ('LayerNorm' in name) or ('layer_norm' in name) or ('bias' in name):
                         bert_non_decay_params.append(param)
+                    else:
+                        bert_decay_params.append(param)
                 else:
                     other_params.append(param)
 
@@ -103,8 +103,11 @@ class Experiment:
 
         self.optimizer['mem'] = torch.optim.AdamW(
             other_params, lr=init_lr, eps=1e-6)
+
+        self.optimizer_params['mem'] = other_params  # Useful in gradient clipping
+
         self.optim_scheduler['mem'] = get_linear_schedule_with_warmup(
-                self.optimizer['mem'], num_warmup_steps=int(0.1 * total_steps),
+                self.optimizer['mem'], num_warmup_steps=0,
                 num_training_steps=total_steps)
         if self.finetune:
             self.optimizer['doc'] = torch.optim.AdamW(
@@ -115,6 +118,9 @@ class Experiment:
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=int(0.1 * total_steps),
                 num_training_steps=total_steps)
+
+            self.optimizer_params['doc'] = bert_decay_params + bert_non_decay_params
+
         self.train_info['epoch'] = 0
         self.train_info['val_perf'] = 0.0
         self.train_info['global_steps'] = 0
@@ -172,10 +178,12 @@ class Experiment:
 
                 total_loss.backward()
                 # Perform gradient clipping and update parameters
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), max_gradient_norm)
+                # torch.nn.utils.clip_grad_norm_(
+                #     model.parameters(), max_gradient_norm)
 
                 for key in optimizer:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.optimizer_params[key], max_norm=max_gradient_norm)
                     optimizer[key].step()
                     scheduler[key].step()
                 # if self.finetune:

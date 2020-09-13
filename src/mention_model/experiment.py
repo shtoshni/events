@@ -19,7 +19,7 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 
 class Experiment:
-    def __init__(self, data_dir=None, dataset='litbank',
+    def __init__(self, data_dir=None, dataset='red',
                  model_dir=None, best_model_dir=None, pretrained_model=None,
                  # Model params
                  seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False,
@@ -161,9 +161,7 @@ class Experiment:
 
                 if (idx + 1) % 10 == 0:
                     print("Steps %d, Max memory %.3f" % (idx + 1, (torch.cuda.max_memory_allocated() / (1024 ** 3))))
-                    torch.cuda.reset_max_memory_allocated()
-                    # print("Current memory %.3f" % (torch.cuda.memory_allocated() / (1024 ** 3)))
-                    # print(torch.cuda.memory_summary())
+                    torch.cuda.reset_peak_memory_stats()
 
             # Update epochs done
             self.train_info['epoch'] = epoch + 1

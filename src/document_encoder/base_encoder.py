@@ -3,6 +3,7 @@ import torch.nn as nn
 from os import path
 from pytorch_utils.utils import get_sequence_mask, get_span_mask
 from transformers import BertModel, BertTokenizer
+from red_utils.constants import DUPLICATE_START_TAG, DUPLICATE_END_TAG
 
 
 class BaseDocEncoder(nn.Module):
@@ -23,6 +24,8 @@ class BaseDocEncoder(nn.Module):
             self.bert = BertModel.from_pretrained(
                 bert_model_name, output_hidden_states=True, gradient_checkpointing=(True if finetune else False))
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+        self.tokenizer.add_tokens([DUPLICATE_START_TAG, DUPLICATE_END_TAG])
+        self.bert.resize_token_embeddings(len(self.tokenizer))
         self.pad_token = 0
 
         if not finetune:

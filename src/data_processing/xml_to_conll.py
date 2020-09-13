@@ -11,9 +11,9 @@ from os import path
 from transformers import BertTokenizer
 from data_processing.utils import get_ent_info, get_clusters_from_xml
 import argparse
+from red_utils.constants import ELEM_TYPE_TO_IDX, DUPLICATE_START_TAG, DUPLICATE_END_TAG
 
 BERT_RE = re.compile(r'## *')
-ELEM_TYPE_TO_IDX = {'ENTITY': 0, 'EVENT': 1}
 NEWLINE_TOKEN = "[NEWL]"
 
 
@@ -31,7 +31,7 @@ class DocumentState(object):
         self.sentence_map = []
         self.segment_info = []
 
-    def finalize(self, clusters, ent_id_to_info, include_singletons=False):
+    def finalize(self, clusters, ent_id_to_info):
         # populate clusters
         self.clusters = []
         processed_ent_ids = set()
@@ -43,12 +43,12 @@ class DocumentState(object):
                                     ELEM_TYPE_TO_IDX[ent_id_to_info[ent_id][2]]))
             self.clusters.append(cur_cluster)
 
-        if include_singletons:
-            for ent_id, info in ent_id_to_info.items():
-                if ent_id in processed_ent_ids:
-                    continue
-                else:
-                    self.clusters.append([(info[0], info[1], ELEM_TYPE_TO_IDX[info[2]])])
+        for ent_id, info in ent_id_to_info.items():
+            if ent_id in processed_ent_ids:
+                continue
+            else:
+                singleton_cluster = [(info[0], info[1], ELEM_TYPE_TO_IDX[info[2]])]
+                self.clusters.append(singleton_cluster)
 
         all_mentions = flatten(self.clusters)
         sentence_map = get_sentence_map(self.segments, self.sentence_end)
@@ -103,7 +103,7 @@ def get_sentence_map(segments, sentence_end):
     return sent_map
 
 
-def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len, include_singletons=False):
+def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len):
     document_state = DocumentState(doc_name)
     word_idx = -1
     for idx, token in enumerate(tokenized_doc):
@@ -136,7 +136,7 @@ def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len,
     document_state.sentence_end[-1] = True
     split_into_segments(document_state, segment_len,
                         document_state.sentence_end, document_state.token_end)
-    document = document_state.finalize(clusters, ent_id_to_info, include_singletons=include_singletons)
+    document = document_state.finalize(clusters, ent_id_to_info)
     return document
 
 
@@ -163,7 +163,7 @@ def tokenize_span(span, doc_name, tokenizer, all_truecase=False):
     return tokenized_span, newline_count
 
 
-def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase=False):
+def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase=False, add_duplicate_tag=False):
     # Read the source document
     doc_str = "".join(open(source_file).readlines())
     # altered_doc_str = doc_str.replace("\n", "[NEWL]")
@@ -173,7 +173,7 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
     root = tree.getroot()
 
     # Get entity and cluster information from the annotation file
-    ent_map, ent_list = get_ent_info(root)
+    ent_map, ent_list = get_ent_info(root, get_duplicates=True)
     clusters = get_clusters_from_xml(root, ent_map)
 
     tokenized_doc = []
@@ -182,27 +182,67 @@ def tokenize_doc(doc_name, tokenizer, source_file, annotation_file, all_truecase
     ent_id_to_info = OrderedDict()
 
     real_span_to_tokenized_span = {}
+    char_to_tokenized_idx = {}
     for (span_start, span_end), ent_type, ent_id in ent_list:
         # Tokenize the string before the span and after the last span
         real_span = tuple([span_start, span_end])
         if real_span not in real_span_to_tokenized_span:
-            before_span_str = doc_str[char_offset: span_start]
-            before_span_tokens, newline_count = tokenize_span(before_span_str, doc_name, tokenizer, all_truecase=all_truecase)
-            tokenized_doc.extend(before_span_tokens)
-            # Don't count newline tokens as they will ultimately be removed.
-            token_counter += len(before_span_tokens) - newline_count
+            if char_offset > span_start:
+                # Overlapping span
+                relv_tokens = tokenizer.tokenize(doc_str[span_start: span_end])
 
-            # Tokenize the span
-            span_tokens, newline_count = tokenize_span(doc_str[span_start: span_end], doc_name, tokenizer, all_truecase=all_truecase)
-            ent_id_to_info[ent_id] = tuple([
-                token_counter, token_counter + len(span_tokens) - 1, ent_type])
-            real_span_to_tokenized_span[real_span] = tuple(
-                [token_counter, token_counter + len(span_tokens) - 1])
+                if span_start in char_to_tokenized_idx:
+                    # The shorted span has already been processed! "x" "x y" overlap
+                    counter_idx, token_idx = char_to_tokenized_idx[span_start]
+                    remaining_tokens, newline_count = tokenize_span(doc_str[char_offset: span_end], doc_name, tokenizer,
+                                                                    all_truecase=all_truecase)
+                    tokenized_doc.extend(remaining_tokens)
+                    char_offset = span_end
+                    # Don't count newline tokens as they will ultimately be removed.
+                    token_counter += len(remaining_tokens) - newline_count
+                    char_to_tokenized_idx[char_offset] = len(tokenized_doc) - 1
 
-            tokenized_doc.extend(span_tokens)
-            char_offset = span_end
-            # Don't count newline tokens as they will ultimately be removed.
-            token_counter += len(span_tokens) - newline_count
+                    ent_id_to_info[ent_id] = tuple([counter_idx, counter_idx + len(relv_tokens) - 1, ent_type])
+
+                elif span_end in char_to_tokenized_idx:
+                    # The span has already been processed! "x y" "y" overlap
+                    counter_idx, token_idx = char_to_tokenized_idx[span_end]
+                    proc_tokens = tokenized_doc[token_idx - len(relv_tokens): token_idx]
+
+                    assert(relv_tokens == proc_tokens)
+                    ent_id_to_info[ent_id] = tuple([counter_idx - len(relv_tokens), counter_idx - 1, ent_type])
+                else:
+                    # We are at lord's mercy
+                    print("JESUS")
+                    raise ValueError(doc_name)
+            else:
+                before_span_str = doc_str[char_offset: span_start]
+                before_span_tokens, newline_count = tokenize_span(before_span_str, doc_name, tokenizer, all_truecase=all_truecase)
+                tokenized_doc.extend(before_span_tokens)
+
+                # Don't count newline tokens as they will ultimately be removed.
+                token_counter += len(before_span_tokens) - newline_count
+                char_to_tokenized_idx[span_start] = (token_counter, len(tokenized_doc))
+
+                # Tokenize the span
+                span_tokens, newline_count = tokenize_span(doc_str[span_start: span_end], doc_name, tokenizer,
+                                                           all_truecase=all_truecase)
+
+                if ent_type != 'DUPLICATE':
+                    ent_id_to_info[ent_id] = tuple([
+                        token_counter, token_counter + len(span_tokens) - 1, ent_type])
+                else:
+                    if add_duplicate_tag:
+                        span_tokens = [DUPLICATE_START_TAG] + span_tokens + [DUPLICATE_END_TAG]
+
+                real_span_to_tokenized_span[real_span] = tuple(
+                    [token_counter, token_counter + len(span_tokens) - 1])
+
+                tokenized_doc.extend(span_tokens)
+                char_offset = span_end
+                # Don't count newline tokens as they will ultimately be removed.
+                token_counter += len(span_tokens) - newline_count
+                char_to_tokenized_idx[char_offset] = (token_counter, len(tokenized_doc))
         else:
             tokenized_start, tokenized_end = real_span_to_tokenized_span[real_span]
             ent_id_to_info[ent_id] = tuple([tokenized_start, tokenized_end, ent_type])
@@ -233,10 +273,10 @@ def minimize_partition(split, tokenizer, args, seg_len):
     with open(output_path, "w") as output_file:
         for doc_name, source_file, annotation_file in \
                 zip(split_files, source_files, annotation_files):
-            tokenized_doc, ent_id_to_info, clusters = tokenize_doc(doc_name, tokenizer, source_file, annotation_file,
-                                                                   all_truecase=args.all_truecase)
-            document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len,
-                                    include_singletons=args.include_singletons)
+            tokenized_doc, ent_id_to_info, clusters = tokenize_doc(
+                doc_name, tokenizer, source_file, annotation_file,
+                all_truecase=args.all_truecase, add_duplicate_tag=args.add_duplicate_tag)
+            document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len)
             output_file.write(json.dumps(document))
             output_file.write("\n")
             count += 1
@@ -245,7 +285,8 @@ def minimize_partition(split, tokenizer, args, seg_len):
 
 def minimize_split(args, seg_len):
     tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-    tokenizer.add_special_tokens({'additional_special_tokens': [NEWLINE_TOKEN]})
+    tokenizer.add_special_tokens(
+        {'additional_special_tokens': [NEWLINE_TOKEN, DUPLICATE_START_TAG, DUPLICATE_END_TAG]})
     for split in ["dev", "test", "train"]:
         minimize_partition(split, tokenizer, args, seg_len)
 
@@ -258,8 +299,8 @@ if __name__ == "__main__":
     parser.add_argument("output_dir", type=str, help="Output directory")
     parser.add_argument("-all_truecase", default=True, action="store_true",
                         help="Pass all documents through truecase.")
-    parser.add_argument("-include_singletons", default=False, action="store_true",
-                        help="Include singletons.")
+    parser.add_argument("-add_duplicate_tag", default=False, action="store_true",
+                        help="Add duplicate tag to indicate duplicated text.")
 
     parsed_args = parser.parse_args()
 
@@ -269,5 +310,5 @@ if __name__ == "__main__":
 
     if not os.path.isdir(parsed_args.output_dir):
         os.mkdir(parsed_args.output_dir)
-    for seg_len in [384, 512]:
+    for seg_len in [512]:
         minimize_split(parsed_args, seg_len)

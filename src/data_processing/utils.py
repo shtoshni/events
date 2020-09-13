@@ -1,4 +1,4 @@
-def get_ent_info(xml_root):
+def get_ent_info(xml_root, get_duplicates=False):
     """Given the root of elment tree, returns the entity and events."""
     ent_map = {}
     ent_list = []
@@ -13,8 +13,11 @@ def get_ent_info(xml_root):
             ent_map[elem_id] = (elem_type, (span_start, span_end))
             ent_list.append([(span_start, span_end), elem_type, elem_id])
 
+        if get_duplicates and elem_type == 'DUPLICATE':
+            ent_list.append([(span_start, span_end), elem_type, elem_id])
+
     # Sort entity list on the basis of span start index
-    ent_list = sorted(ent_list, key=lambda x: x[0][0])
+    ent_list = sorted(ent_list, key=lambda x: x[0][0] + 1e-5 * x[0][1])
 
     return ent_map, ent_list
 

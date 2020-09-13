@@ -29,8 +29,8 @@ def main():
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
-    parser.add_argument('-proc_strategy', default='singleton', type=str,
-                        choices=['singleton'], help='BERT model type')
+    parser.add_argument('-proc_strategy', default=None, type=str,
+                        choices=['duplicate'], help='BERT model type')
     parser.add_argument('-pretrained_bert_dir', default='../../../litbank_coref/resources/', type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
@@ -55,13 +55,13 @@ def main():
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=30, type=int)
+                        help='Maximum number of epochs', default=20, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Initial learning rate",
-                        default=2e-5, type=float)
+                        default=5e-5, type=float)
     parser.add_argument('-finetune', help="Finetune document encoder",
                         default=False, action="store_true")
     parser.add_argument('-checkpoint', help="Use checkpoint",
@@ -85,8 +85,9 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
+    doc_enc = args.doc_enc + (f'_{args.proc_strategy}' if args.proc_strategy else '')
     args.data_dir = path.join(args.base_data_dir,
-                              f'{args.dataset}/{args.doc_enc}_{args.proc_strategy}')
+                              f'{args.dataset}/{doc_enc}')
     print(args.data_dir)
     # Log directory for Tensorflow Summary
     log_dir = path.join(model_dir, "logs")

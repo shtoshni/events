@@ -42,7 +42,9 @@ class IndependentDocEncoder(BaseDocEncoder):
     def tensorize_example(self, example):
         sentences = example["sentences"]
         sent_len_list = [(len(sent) + 2) for sent in sentences]
+
         max_sent_len = max(sent_len_list)
+        # print(max_sent_len)
         # Add 0 and 1 for CLS and SEP
         padded_sent = [[101] + self.tokenizer.convert_tokens_to_ids(sent) + [102]
                        + [self.pad_token] * (max_sent_len - (len(sent) + 2))

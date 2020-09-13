@@ -29,6 +29,8 @@ def main():
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
+    parser.add_argument('-proc_strategy', default=None, type=str,
+                        choices=['duplicate'], help='Processing strategy.')
     parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/litbank_coref/resources", type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
@@ -42,8 +44,6 @@ def main():
     parser.add_argument('-focus_group', default='joint', choices=['joint', 'entity', 'event'], type=str,
                         help='Mentions in focus. If both, the cluster all mentions, otherwise cluster particular type'
                              ' of mentions.')
-    parser.add_argument('-include_singletons', default=False,
-                        action="store_true", help='Include singletons in experiment or not.')
 
     # Memory variables
     parser.add_argument('-mem_type', default='unbounded',
@@ -99,9 +99,9 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc",  # Encoder params
+    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc", 'proc_strategy',  # Encoder params
                 'mem_type', 'num_cells', 'mem_size', 'mlp_size', 'mlp_depth',  # Memory params
-                'use_srl', 'include_singletons',  # SRL vector
+                'use_srl',  # SRL vector
                 'focus_group',  # Mentions of particular focus
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
                 'label_smoothing_other', 'dataset', 'num_train_docs', 'sample_singletons',
@@ -125,7 +125,7 @@ def main():
         os.makedirs(best_model_dir)
 
     # doc_enc = args.doc_enc + ('_truecase' if args.all_truecase else '')
-    doc_enc = args.doc_enc + ('_singleton' if args.include_singletons else '')
+    doc_enc = args.doc_enc + (f'_{args.proc_strategy}' if args.proc_strategy else '')
     args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{doc_enc}')
     print(args.data_dir)
     # Log directory for Tensorflow Summary
