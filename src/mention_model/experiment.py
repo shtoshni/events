@@ -261,7 +261,7 @@ class Experiment:
                             max_fscore[ment_type] = agg_results[ment_type][key]['fscore']
                             threshold[ment_type] = key
 
-                logging.info(f"Max F-score: {max_fscore}, Threshold: {threshold}")
+            logging.info(f"Max F-score: {max_fscore}, Threshold: {threshold}")
 
         print(total_recall, total_gold)
         overall_recall = (sum(total_recall.values())/sum(total_gold.values()))
