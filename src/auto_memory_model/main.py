@@ -7,6 +7,7 @@ import subprocess
 from collections import OrderedDict
 
 from auto_memory_model.experiment import Experiment
+from mention_model.utils import get_mention_model_name
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
@@ -38,9 +39,9 @@ def main():
                         help='Max segment length of BERT segments.')
 
     # Mention variables
-    parser.add_argument('-max_span_width', default=20, type=int,
+    parser.add_argument('-max_span_width', default=10, type=int,
                         help='Max span width.')
-    parser.add_argument('-ment_emb', default='endpoint', choices=['attn', 'endpoint'],
+    parser.add_argument('-ment_emb', default='attn', choices=['attn', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
     parser.add_argument('-focus_group', default='joint', choices=['joint', 'entity', 'event'], type=str,
                         help='Mentions in focus. If both, the cluster all mentions, otherwise cluster particular type'
@@ -54,12 +55,14 @@ def main():
                         help="Number of memory cells.")
     parser.add_argument('-mem_size', default=None, type=int,
                         help='Memory size used in the model')
-    parser.add_argument('-mlp_size', default=1024, type=int,
+    parser.add_argument('-mlp_size', default=1000, type=int,
                         help='MLP size used in the model')
     parser.add_argument('-mlp_depth', default=1, type=int,
                         help='Number of hidden layers in other MLPs')
     parser.add_argument('-use_srl', default=None, choices=['joint', 'event'], type=str,
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
+    parser.add_argument('-entity_rep', default='wt_avg', type=str,
+                        choices=['learned_avg', 'wt_avg'], help='Entity representation.')
     parser.add_argument('-emb_size', default=20, type=int,
                         help='Embedding size of features.')
 
@@ -68,16 +71,16 @@ def main():
                         default=1.0, type=float)
     parser.add_argument('-over_loss_wt', help='Weight of overwrite loss',
                         default=1.0, type=float)
-    parser.add_argument('-sample_singletons', help='Sample singletons during training',
+    parser.add_argument('-sample_invalid', help='Sample invalids during training',
                         default=1.0, type=float)
     parser.add_argument('-num_train_docs', default=None, type=int,
                         help='Number of training docs.')
+    parser.add_argument('-max_training_segments', default=None, type=int,
+                        help='Max. number of BERT segments in a document.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
-                        default=0.1, type=float)
-    parser.add_argument('-label_smoothing_other', help='Type of label smoothing',
-                        default=False, action="store_true")
+                        default=0.0, type=float)
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
@@ -89,7 +92,7 @@ def main():
     parser.add_argument('-finetune', help="Fine-tuning document encoder",
                         default=False, action="store_true")
     parser.add_argument('-no_singletons', help="No singletons.",
-                        default=True, action="store_true")
+                        default=False, action="store_true")
     parser.add_argument('-eval', help="Evaluate model",
                         default=False, action="store_true")
     parser.add_argument('-slurm_id', help="Slurm ID",
@@ -105,7 +108,7 @@ def main():
                 'use_srl',  # SRL vector
                 'focus_group',  # Mentions of particular focus
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
-                'label_smoothing_other', 'dataset', 'num_train_docs', 'sample_singletons',
+                'dataset', 'num_train_docs', 'sample_singletons', 'max_training_segments',
                 'over_loss_wt',  "new_ent_wt",  # Training params
                 ]
     for key, val in vars(args).items():
@@ -129,6 +132,12 @@ def main():
     doc_enc = args.doc_enc + (f'_{args.proc_strategy}' if (args.proc_strategy != 'default') else '')
     args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{doc_enc}')
     print(args.data_dir)
+
+    # Get mention model name
+    args.pretrained_mention_model = path.join(
+        path.join(args.base_model_dir, get_mention_model_name(args)), "best_models/model.pth")
+    print(args.pretrained_mention_model)
+
     # Log directory for Tensorflow Summary
     log_dir = path.join(model_dir, "logs")
     if not path.exists(log_dir):

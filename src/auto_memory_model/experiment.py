@@ -25,6 +25,7 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 class Experiment:
     def __init__(self, args, data_dir=None, conll_data_dir=None,
                  model_dir=None, best_model_dir=None,
+                 pretrained_mention_model=None,
                  # Model params
                  focus_group='joint',
                  seed=0, init_lr=5e-4, ft_lr=2e-5, finetune=False,
@@ -53,6 +54,7 @@ class Experiment:
         self.slurm_id = slurm_id
 
         # Get model paths
+        self.pretrained_mention_model=pretrained_mention_model
         self.model_dir = model_dir
         self.data_dir = data_dir
         self.conll_data_dir = conll_data_dir
@@ -129,8 +131,13 @@ class Experiment:
         if not path.exists(self.model_path):
             torch.manual_seed(self.seed)
             np.random.seed(self.seed)
+            # Try to initialize the mention model part
+            if path.exists(self.pretrained_mention_model):
+                print("Found pretrained model!!")
+                checkpoint = torch.load(self.pretrained_mention_model)
+                self.model.load_state_dict(checkpoint['model'], strict=False)
         else:
-            logging.info('Loading previous model: %s' % (self.model_path))
+            logging.info('Loading previous model: %s' % self.model_path)
             # Load model
             self.load_model(self.model_path)
 
@@ -150,53 +157,51 @@ class Experiment:
             # Setup training
             model.train()
             np.random.shuffle(self.train_examples)
-            batch_loss = 0
-            errors = OrderedDict([("WL", 0), ("FN", 0), ("WF", 0),
-                                  ("WO", 0), ("FL", 0), ("C", 0)])
-            for example in self.train_examples:
-                self.train_info['global_steps'] += 1
-                output = model(example)
-                if output is None:
+            # errors = OrderedDict([("WL", 0), ("FN", 0), ("WF", 0),
+            #                       ("WO", 0), ("FL", 0), ("C", 0)])
+            for cur_example in self.train_examples:
+                def handle_example(example):
+                    self.train_info['global_steps'] += 1
+                    output = model(example)
+                    if output is None:
+                        return None
+                    loss = output[0]
+                    # batch_errors = classify_errors(pred_action_list, gt_actions)
+                    # for key in errors:
+                    #     errors[key] += batch_errors[key]
+
+                    total_loss = loss['total']
+                    if isinstance(total_loss, float):
+                        print(f"Weird thing - {total_loss}")
+                        return None
+
+                    if torch.isnan(total_loss):
+                        print("Loss is NaN")
+                        sys.exit()
+                    # Backprop
+                    for key in optimizer:
+                        optimizer[key].zero_grad()
+
+                    total_loss.backward()
+
+                    for key in optimizer:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.optimizer_params[key], max_norm=max_gradient_norm)
+                        optimizer[key].step()
+                        scheduler[key].step()
+
+                    return total_loss.item()
+
+                example_loss = handle_example(cur_example)
+                if example_loss is None:
                     continue
-                loss, pred_action_list, pred_mentions, gt_actions, gt_mentions = output
-                batch_errors = classify_errors(pred_action_list, gt_actions)
-                for key in errors:
-                    errors[key] += batch_errors[key]
-
-                total_loss = loss['total']
-                if isinstance(total_loss, float):
-                    print(f"Weird thing - {total_loss}")
-                    continue
-                batch_loss += total_loss.item()
-
-                if torch.isnan(total_loss):
-                    print("Loss is NaN")
-                    sys.exit()
-                # Backprop
-                for key in optimizer:
-                    optimizer[key].zero_grad()
-
-                total_loss.backward()
-                # Perform gradient clipping and update parameters
-                # torch.nn.utils.clip_grad_norm_(
-                #     model.parameters(), max_gradient_norm)
-
-                for key in optimizer:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.optimizer_params[key], max_norm=max_gradient_norm)
-                    optimizer[key].step()
-                    scheduler[key].step()
-                # if self.finetune:
-                #     scheduler['doc'].step()
-                #     scheduler['mem'].step()
-
                 if self.train_info['global_steps'] % 10 == 0:
                     max_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
-                    print(example["doc_key"], '{:.3f}, Max memory {:.3f}'.format(total_loss.item(), max_mem))
+                    print(cur_example["doc_key"], '{:.3f}, Max memory {:.3f}'.format(example_loss, max_mem))
                     torch.cuda.reset_peak_memory_stats()
 
             sys.stdout.flush()
-            logging.info(errors)
+            # logging.info(errors)
             # Update epochs done
             self.train_info['epoch'] = epoch + 1
 
@@ -259,7 +264,7 @@ class Experiment:
                     if output is None:
                         # Possible when doing just events where some files don't have event annotations
                         continue
-                    loss, action_list, pred_mentions, gt_actions, gt_mentions = output
+                    loss, action_list, pred_mentions, gt_actions = output
 
                     for pred_action, gt_action in zip(action_list, gt_actions):
                         pred_class_counter[pred_action[1]] += 1
@@ -321,7 +326,7 @@ class Experiment:
                     logging.info(focus_group.capitalize())
                     if split != 'test':
                         logging.info("F-score: %.1f %s" % (fscore, perf_str))
-                        logging.info("Oracle F-score: %.2f\n" % (oracle_evaluator_dict[focus_group].get_prf()[2]))
+                        logging.info("Oracle F-score: %.1f\n" % (oracle_evaluator_dict[focus_group].get_prf()[2] * 100))
 
                 # logging.info("Action accuracy: %.3f" % (corr_actions/total_actions))
                 logging.info(log_file)

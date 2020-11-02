@@ -6,73 +6,97 @@ class LearnedFixedMemory(BaseFixedMemory):
     def __init__(self, **kwargs):
         super(LearnedFixedMemory, self).__init__(**kwargs)
 
-    def predict_action(self, query_vector, ment_type, ment_idx):
-        distance_embs = self.get_distance_emb(ment_idx - self.last_mention_idx)
-        counter_embs = self.get_counter_emb(self.ent_counter)
+    def get_overwrite_ign_mask(self, ent_counter):
+        free_cell_mask = (ent_counter == 0.0).float().cuda()
+        if torch.max(free_cell_mask) > 0:
+            free_cell_mask = free_cell_mask * torch.arange(self.num_cells + 1, 1, -1).float().cuda()
+            free_cell_idx = torch.max(free_cell_mask, 0)[1]
+            last_unused_cell = free_cell_idx.item()
+            mask = torch.zeros(self.num_cells + 2).cuda()
+            mask[last_unused_cell] = 1.0
+            mask[-1] = 1.0  # Not a mention
+            return mask
+        else:
+            return torch.ones(self.num_cells + 2).cuda()
 
-        coref_new_scores, coref_new_log_prob, srl_vec, use_srl_mask = self.get_coref_new_log_prob(
-            query_vector, ment_type, distance_embs, counter_embs)
+    def predict_new_or_ignore(self, query_vector, ment_score, mem_vectors,
+                              ent_counter, feature_embs, ment_feature_embs):
         # Fertility Score
-        # Memory + Mention fertility input
-        mem_fert_input = torch.cat([self.mem, distance_embs, counter_embs], dim=-1)
-        # Mention fertility input
-        ment_distance_emb = torch.squeeze(self.distance_embeddings(torch.tensor([0]).cuda()), dim=0)
-        ment_counter_emb = torch.squeeze(self.counter_embeddings(torch.tensor([0]).cuda()), dim=0)
-        ment_fert_input = torch.unsqueeze(
-            torch.cat([query_vector, ment_distance_emb, ment_counter_emb], dim=0), dim=0)
-        # Fertility scores
+        mem_fert_input = torch.cat([mem_vectors, feature_embs], dim=-1)
+        ment_fert_input = torch.unsqueeze(torch.cat([query_vector, ment_feature_embs], dim=-1), dim=0)
         fert_input = torch.cat([mem_fert_input, ment_fert_input], dim=0)
-        fert_scores = torch.squeeze(self.fert_mlp(fert_input), dim=-1)
 
-        overwrite_ign_mask = self.get_overwrite_ign_mask(self.ent_counter)
-        overwrite_ign_scores = fert_scores * overwrite_ign_mask + (1 - overwrite_ign_mask) * (-1e4)
-        overwrite_ign_log_prob = torch.nn.functional.log_softmax(overwrite_ign_scores, dim=0)
+        # del mem_fert_input
+        # del ment_fert_input
 
-        norm_overwrite_ign_log_prob = (coref_new_log_prob[self.num_cells] + overwrite_ign_log_prob)
-        all_log_prob = torch.cat([coref_new_log_prob[:self.num_cells],
-                                  norm_overwrite_ign_log_prob], dim=0)
-        return all_log_prob, coref_new_scores, overwrite_ign_scores, srl_vec, use_srl_mask
+        fert_scores = self.fert_mlp(fert_input)
+        fert_scores = torch.squeeze(fert_scores, dim=-1)
+        # del fert_input
 
-    def forward(self, doc_type, mention_emb_list, actions, mentions,
+        new_or_ignore_scores = torch.cat([fert_scores, -ment_score], dim=0)
+
+        overwrite_ign_mask = self.get_overwrite_ign_mask(ent_counter)
+        new_or_ignore_scores = new_or_ignore_scores * overwrite_ign_mask + (1 - overwrite_ign_mask) * (-1e4)
+
+        return new_or_ignore_scores
+
+    def interpret_new_ignore_score(self, overwrite_ign_no_space_scores):
+        over_max_idx = torch.argmax(overwrite_ign_no_space_scores).item()
+        if over_max_idx < self.num_cells:
+            return over_max_idx, 'o'
+        elif over_max_idx == self.num_cells:
+            # No space
+            return -1, 'n'
+        elif over_max_idx == self.num_cells + 1:
+            # Invalid mention
+            return -1, 'i'
+
+    def forward(self, mention_emb_list, mention_scores, gt_actions, metadata, rand_fl_list,
                 teacher_forcing=False):
         # Initialize memory
-        self.initialize_memory()
+        mem_vectors, ent_counter, last_mention_idx = self.initialize_memory()
 
-        action_logit_list = []
-        action_list = []  # argmax actions
-        action_str = '<s>'
+        action_list = []
+        coref_new_list = []  # argmax actions
+        new_ignore_list = []
+        last_action_str = '<s>'
 
-        for ment_idx, (ment_emb, (span_start, span_end, ment_type), (gt_cell_idx, gt_action_str)) in \
-                enumerate(zip(mention_emb_list, mentions, actions)):
-            # Doc type embedding
-            doc_type_idx = self.doc_type_to_idx[doc_type]
-            doc_type_emb = self.doc_type_emb(torch.tensor(doc_type_idx).long().cuda())
-            # Embed the mention type
-            ment_type_emb = self.ment_type_emb(torch.tensor(ment_type).long().cuda())
-            # Embed the width embedding
-            width_bucket = self.get_mention_width_bucket(span_end - span_start)
-            width_embedding = self.width_embeddings(torch.tensor(width_bucket).long().cuda())
-            # Last action embedding
-            last_action_emb = self.get_last_action_emb(action_str)
+        follow_gt = self.training or teacher_forcing
 
-            query_vector = self.query_projector(
-                torch.cat([ment_emb, doc_type_emb, ment_type_emb,
-                           width_embedding, last_action_emb], dim=0))
+        for ment_idx, (ment_emb, ment_score, (gt_cell_idx, gt_action_str)) in \
+                enumerate(zip(mention_emb_list, mention_scores, gt_actions)):
+            query_vector = ment_emb
 
-            all_log_probs, coref_new_scores, overwrite_ign_scores, srl_vec, use_srl_mask = self.predict_action(
-                query_vector, ment_type, ment_idx)
+            if not (follow_gt and gt_action_str == 'i' and rand_fl_list[ment_idx] > self.sample_invalid):
+                # This part of the code executes in the following cases:
+                # (a) Inference
+                # (b) Training and the mention is not an invalid or
+                # (c) Training and mention is an invalid mention and randomly sampled float is less than invalid
+                # sampling probability
+                metadata['last_action'] = self.action_str_to_idx[last_action_str]
+                feature_embs = self.get_feature_embs(ment_idx, last_mention_idx, ent_counter, metadata)
+                ment_feature_embs = self.get_ment_feature_embs(metadata)
 
-            action_logit_list.append((coref_new_scores, overwrite_ign_scores))
+                coref_new_scores = self.get_coref_new_scores(query_vector, ment_score, mem_vectors,
+                                                             ent_counter, feature_embs)
+                coref_new_list.append(coref_new_scores)
 
-            pred_max_idx = torch.argmax(all_log_probs).item()
-            pred_cell_idx = pred_max_idx % self.num_cells
-            pred_action_idx = pred_max_idx // self.num_cells
-            pred_action_str = self.action_idx_to_str[pred_action_idx]
-            # During training this records the next actions  - during testing it records the
-            # predicted sequence of actions
-            action_list.append((pred_cell_idx, pred_action_str))
+                pred_cell_idx, pred_action_str = self.interpret_coref_new_score(coref_new_scores)
 
-            if self.training or teacher_forcing:
+                if (follow_gt and gt_action_str != 'c') or ((not follow_gt) and pred_action_str != 'c'):
+                    new_ignore_score = self.predict_new_or_ignore(
+                        query_vector, ment_score, mem_vectors,
+                        ent_counter, feature_embs, ment_feature_embs)
+                    pred_cell_idx, pred_action_str = self.interpret_new_ignore_score(new_ignore_score)
+                    new_ignore_list.append(new_ignore_score)
+
+                # During training this records the next actions  - during testing it records the
+                # predicted sequence of actions
+                action_list.append((pred_cell_idx, pred_action_str))
+            else:
+                continue
+
+            if follow_gt:
                 # Training - Operate over the ground truth
                 action_str = gt_action_str
                 cell_idx = gt_cell_idx
@@ -81,38 +105,27 @@ class LearnedFixedMemory(BaseFixedMemory):
                 action_str = pred_action_str
                 cell_idx = pred_cell_idx
 
+            # Update last action
+            last_action_str = action_str
+
             # Update the memory
-            rep_query_vector = query_vector.repeat(self.num_cells, 1)  # M x H
+            # rep_query_vector = query_vector.repeat(self.num_cells, 1)  # M x H
             cell_mask = (torch.arange(0, self.num_cells) == cell_idx).float().cuda()
             mask = torch.unsqueeze(cell_mask, dim=1)
             mask = mask.repeat(1, self.mem_size)
 
             if action_str == 'c':
                 # Update memory vector corresponding to cell_idx
-                total_counts = torch.unsqueeze((self.ent_counter + 1).float(), dim=1)
-                pool_vec_num = (self.mem * torch.unsqueeze(self.ent_counter, dim=1)
-                                + rep_query_vector)
-                avg_pool_vec = pool_vec_num/total_counts
-                self.mem = self.mem * (1 - mask) + mask * avg_pool_vec
-                if self.use_srl:
-                    pool_vec_num = (self.srl_mem * torch.unsqueeze(self.ent_counter, dim=1)
-                                    + srl_vec)
-                    avg_pool_vec = pool_vec_num / total_counts
-                    self.srl_mem = self.srl_mem * (1 - mask) + mask * avg_pool_vec
+                mem_vectors = self.coref_update(mem_vectors, query_vector, cell_idx, mask, ent_counter)
 
                 # Update last mention vector
-                self.ent_counter = self.ent_counter + cell_mask
-                self.last_mention_idx[cell_idx] = ment_idx
-
-                assert (ment_type == self.cluster_type[cell_idx])
+                ent_counter = ent_counter + cell_mask
+                last_mention_idx[cell_idx] = ment_idx
             elif action_str == 'o':
                 # Replace the cell content
-                self.mem = self.mem * (1 - mask) + mask * rep_query_vector
-                if self.use_srl:
-                    self.srl_mem = self.srl_mem * (1 - mask) + mask * srl_vec
+                mem_vectors = mem_vectors * (1 - mask) + mask * torch.unsqueeze(query_vector, dim=0)
 
-                self.ent_counter = self.ent_counter * (1 - cell_mask) + cell_mask
-                self.last_mention_idx[cell_idx] = ment_idx
-                self.cluster_type[cell_idx] = ment_type
+                last_mention_idx[cell_idx] = ment_idx
+                ent_counter = ent_counter * (1 - cell_mask) + cell_mask
 
-        return action_logit_list, action_list
+        return coref_new_list, new_ignore_list, action_list

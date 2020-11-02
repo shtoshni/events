@@ -1,21 +1,30 @@
-import random
 import torch
 import torch.nn as nn
 
-from pytorch_utils.utils import get_sequence_mask, get_span_mask
-from document_encoder import IndependentDocEncoder, OverlapDocEncoder
-from auto_memory_model.utils import get_ordered_mentions
-from red_utils.constants import ELEM_TYPE_TO_IDX
+from collections import Counter, OrderedDict
+from document_encoder.independent import IndependentDocEncoder
+from document_encoder.overlap import OverlapDocEncoder
+from pytorch_utils.modules import MLP
+from red_utils.constants import ELEM_TYPE_TO_IDX, IDX_TO_ELEM_TYPE, DOC_TYPE_TO_IDX
+from red_utils.utils import get_doc_type
+
+ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.25, 'EVENT': 0.2}
 
 
 class BaseController(nn.Module):
     def __init__(self,
-                 dropout_rate=0.5, max_span_width=20, focus_group='both',
-                 ment_emb='endpoint', doc_enc='independent',
-                 sample_singletons=1.0, label_smoothing_wt=0.1, label_smoothing_other=False,
+                 dropout_rate=0.5, max_span_width=20, top_span_ratio=0.4,
+                 ment_emb='endpoint', doc_enc='independent', mlp_size=1000,
+                 emb_size=20, sample_invalid=1.0, label_smoothing_wt=0.0,
+                 dataset='red',  focus_group='both',
                  **kwargs):
         super(BaseController, self).__init__()
+        self.dataset = dataset
+
         self.max_span_width = max_span_width
+        self.top_span_ratio = top_span_ratio
+        self.sample_invalid = sample_invalid
+        self.label_smoothing_wt = label_smoothing_wt
 
         if doc_enc == 'independent':
             self.doc_encoder = IndependentDocEncoder(**kwargs)
@@ -23,27 +32,57 @@ class BaseController(nn.Module):
             self.doc_encoder = OverlapDocEncoder(**kwargs)
 
         self.hsize = self.doc_encoder.hsize
-        self.drop_module = nn.Dropout(p=dropout_rate, inplace=False)
+        self.mlp_size = mlp_size
+        self.emb_size = emb_size
+        self.drop_module = nn.Dropout(p=dropout_rate)
         self.ment_emb = ment_emb
         self.focus_group = focus_group
         self.ment_emb_to_size_factor = {'attn': 3, 'endpoint': 2, 'max': 1}
 
-        self.sample_singletons = sample_singletons
-        self.label_smoothing_wt = label_smoothing_wt
-        self.label_smoothing_other = label_smoothing_other
-
         if self.ment_emb == 'attn':
             self.mention_attn = nn.Linear(self.hsize, 1)
+
+        self.other = nn.Module()
+        self.other.span_width_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
+        self.other.span_width_prior_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
+        self.other.doc_type_emb = nn.Embedding(3, self.emb_size)
+
+        self.other.mention_mlp = nn.ModuleDict()
+        for elem_type in IDX_TO_ELEM_TYPE[:2]:
+            self.other.mention_mlp[elem_type] = MLP(
+                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
+                hidden_size=self.mlp_size, output_size=1, num_hidden_layers=1,
+                bias=True, drop_module=self.drop_module)
+        self.other.span_width_mlp = MLP(
+            input_size=20, hidden_size=self.mlp_size,
+            output_size=1, num_hidden_layers=1, bias=True,
+            drop_module=self.drop_module)
 
         self.memory_net = None
         self.loss_fn = {}
 
-    def get_mention_embeddings(self, encoded_doc, ment_starts, ment_ends):
-        ment_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
+    def get_mention_width_scores(self, cand_starts, cand_ends):
+        span_width_idx = cand_ends - cand_starts
+        span_width_embs = self.other.span_width_prior_embeddings(span_width_idx)
+        width_scores = torch.squeeze(self.other.span_width_mlp(span_width_embs), dim=-1)
 
-        if self.ment_emb == 'endpoint':
-            return torch.cat(ment_emb_list, dim=-1)
-        else:
+        return width_scores
+
+    def get_span_embeddings(self, encoded_doc, ment_starts, ment_ends, doc_type):
+        span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
+
+        # Add span width embeddings
+        span_width_indices = ment_ends - ment_starts
+        span_width_embs = self.other.span_width_embeddings(span_width_indices)
+        span_emb_list.append(span_width_embs)
+
+        doc_type_idx = DOC_TYPE_TO_IDX[doc_type]
+        doc_type_emb = self.other.doc_type_emb(torch.tensor(doc_type_idx).long().cuda())
+        doc_type_emb = torch.unsqueeze(doc_type_emb, dim=0)
+        doc_type_emb = doc_type_emb.repeat(span_width_embs.shape[0], 1)
+        span_emb_list.append(doc_type_emb)
+
+        if self.ment_emb == 'attn':
             num_words = encoded_doc.shape[0]  # T
             num_c = ment_starts.shape[0]  # C
             doc_range = torch.unsqueeze(torch.arange(num_words), 0).repeat(num_c, 1).cuda()  # [C x T]
@@ -52,46 +91,101 @@ class BaseController(nn.Module):
             word_attn = torch.squeeze(self.mention_attn(encoded_doc), dim=1)  # [T]
             mention_word_attn = nn.functional.softmax(
                 (1 - ment_masks.float()) * (-1e10) + torch.unsqueeze(word_attn, dim=0), dim=1)  # [C x T]
-            attention_term = torch.matmul(mention_word_attn, encoded_doc)  # K x H
 
-            ment_emb_list.append(attention_term)
-            return torch.cat(ment_emb_list, dim=1)
+            attention_term = torch.matmul(mention_word_attn, encoded_doc)  # C x H
+            span_emb_list.append(attention_term)
 
-    def get_document_enc(self, example):
-        if self.doc_enc == 'independent':
-            encoded_output = self.doc_enc(example)
-        else:
-            # Overlap
-            encoded_output = None
+        span_embs = torch.cat(span_emb_list, dim=-1)
+        return span_embs
 
-        return encoded_output
+    def get_gold_mentions(self, clusters, num_words, flat_cand_mask, ment_type):
+        gold_ments = torch.zeros(num_words, self.max_span_width).cuda()
+        for cluster in clusters:
+            for mention in cluster:
+                span_start, span_end, span_type = mention
+                if span_type == ment_type:
+                    span_width = span_end - span_start + 1
+                    if span_width <= self.max_span_width:
+                        span_width_idx = span_width - 1
+                        gold_ments[span_start, span_width_idx] = 1
+
+        filt_gold_ments = gold_ments.reshape(-1)[flat_cand_mask].float()
+        # assert(torch.sum(gold_ments) == torch.sum(filt_gold_ments))  # Filtering shouldn't remove gold mentions
+        return filt_gold_ments
+
+    def get_candidate_endpoints(self, encoded_doc, example):
+        num_words = encoded_doc.shape[0]
+
+        sent_map = torch.tensor(example["sentence_map"]).cuda()
+        # num_words x max_span_width
+        cand_starts = torch.unsqueeze(torch.arange(num_words), dim=1).repeat(1, self.max_span_width).cuda()
+        cand_ends = cand_starts + torch.unsqueeze(torch.arange(self.max_span_width), dim=0).cuda()
+
+        cand_start_sent_indices = sent_map[cand_starts]
+        # Avoid getting sentence indices for cand_ends >= num_words
+        corr_cand_ends = torch.min(cand_ends, torch.ones_like(cand_ends).cuda() * (num_words - 1))
+        cand_end_sent_indices = sent_map[corr_cand_ends]
+
+        # End before document ends & Same sentence
+        constraint1 = (cand_ends < num_words)
+        # Removing this constraint because RED doesn't have sentence segmentation
+        constraint2 = (cand_start_sent_indices == cand_end_sent_indices)
+        cand_mask = constraint1 & constraint2
+        flat_cand_mask = cand_mask.reshape(-1)
+
+        # Filter and flatten the candidate end points
+        filt_cand_starts = cand_starts.reshape(-1)[flat_cand_mask]  # (num_candidates,)
+        filt_cand_ends = cand_ends.reshape(-1)[flat_cand_mask]  # (num_candidates,)
+        return filt_cand_starts, filt_cand_ends, flat_cand_mask
+
+    def get_pred_mentions(self, example, encoded_doc):
+        num_words = encoded_doc.shape[0]
+
+        filt_cand_starts, filt_cand_ends, flat_cand_mask = self.get_candidate_endpoints(encoded_doc, example)
+
+        span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends, get_doc_type(example))
+        ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends)
+
+        predictions = OrderedDict()
+        for ment_idx, ment_type in enumerate(IDX_TO_ELEM_TYPE):
+            mention_logits = torch.squeeze(self.other.mention_mlp[ment_type](span_embs), dim=-1)
+            mention_logits += ment_width_scores
+
+            k = int(self.top_span_ratio * num_words)
+            topk_indices = torch.topk(mention_logits, k)[1]
+
+            topk_starts = filt_cand_starts[topk_indices]
+            topk_ends = filt_cand_ends[topk_indices]
+            topk_scores = mention_logits[topk_indices]
+
+            # Sort the mentions by (start) and tiebreak with (end)
+            sort_scores = topk_starts + 1e-5 * topk_ends
+            _, sorted_indices = torch.sort(sort_scores, 0)
+
+            predictions[ment_idx] = (topk_starts[sorted_indices], topk_ends[sorted_indices],
+                                     topk_scores[sorted_indices])
+
+        return predictions
 
     def get_mention_embs_and_actions(self, example):
-        encoded_output = self.doc_encoder(example)
+        encoded_doc = self.doc_encoder(example)
+        predictions = self.get_pred_mentions(example, encoded_doc)
 
-        clusters = example["clusters"]
-        if self.sample_singletons < 1.0 and self.training:
-            clusters = [cluster for cluster in clusters
-                        if (len(cluster) > 1) or (random.random() <= self.sample_singletons)]
+        pred_mentions = []
+        mention_emb_list = ()
+        pred_scores_list = ()
 
-        gt_mentions = get_ordered_mentions(clusters)
-        pred_mentions = gt_mentions
-        # print(self.focus_group)
-        if self.focus_group == 'entity':
-            pred_mentions = [mention for mention in pred_mentions if mention[2] == ELEM_TYPE_TO_IDX['ENTITY']]
-        elif self.focus_group == 'event':
-            pred_mentions = [mention for mention in pred_mentions if mention[2] == ELEM_TYPE_TO_IDX['EVENT']]
+        for ment_idx, ment_type in enumerate(IDX_TO_ELEM_TYPE):
+            pred_starts, pred_ends, pred_scores = predictions[ment_idx]
+            pred_mentions = pred_mentions + list(zip(pred_starts.tolist(), pred_ends.tolist(),
+                                                     [ment_idx] * pred_starts.shape[0]))
+            pred_scores_list = pred_scores_list + torch.unbind(torch.unsqueeze(pred_scores, dim=1))
 
-        if len(pred_mentions):
-            gt_actions = self.get_actions(pred_mentions, clusters)
+            mention_embs = self.get_span_embeddings(encoded_doc, pred_starts, pred_ends, get_doc_type(example))
+            mention_emb_list = mention_emb_list + torch.unbind(mention_embs, dim=0)
 
-            cand_starts, cand_ends, ent_type = zip(*pred_mentions)
-            mention_embs = self.get_mention_embeddings(
-                encoded_output, torch.tensor(cand_starts).cuda(), torch.tensor(cand_ends).cuda())
-            mention_emb_list = torch.unbind(mention_embs, dim=0)
-            return gt_mentions, pred_mentions, gt_actions, mention_emb_list
-        else:
-            return [], [], [], []
+        gt_actions = self.get_actions(pred_mentions, example["clusters"])
+        return pred_mentions, gt_actions, mention_emb_list, pred_scores_list
 
     def forward(self, example, teacher_forcing=False):
         pass

@@ -15,7 +15,7 @@ from red_utils.utils import load_data
 from coref_utils.utils import mention_to_cluster
 from coref_utils.metrics import CorefEvaluator
 import pytorch_utils.utils as utils
-from auto_memory_model.controller import LearnedFixedMemController, UnboundedMemController
+from auto_memory_model.controller_old import LearnedFixedMemController, UnboundedMemController
 
 
 class CorefModel(LightningModule):

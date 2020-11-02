@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from auto_memory_model.controller.base_controller import BaseController
+from auto_memory_model.controller_old.base_controller import BaseController
 from pytorch_utils.modules import MLP
 from red_utils.constants import IDX_TO_ELEM_TYPE, DOC_TYPE_TO_IDX
 from document_encoder import IndependentDocEncoder, OverlapDocEncoder
