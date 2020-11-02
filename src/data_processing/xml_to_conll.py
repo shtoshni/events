@@ -30,10 +30,10 @@ class DocumentState(object):
         self.segment_subtoken_map = []
         self.sentence_map = []
         self.segment_info = []
+        self.clusters = []
 
     def finalize(self, clusters, ent_id_to_info):
         # populate clusters
-        self.clusters = []
         processed_ent_ids = set()
         for cluster in clusters:
             cur_cluster = []

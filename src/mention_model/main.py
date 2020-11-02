@@ -28,17 +28,19 @@ def main():
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
     parser.add_argument('-doc_enc', default='independent', type=str,
-                        choices=['independent', 'overlap'], help='BERT model type')
+                        choices=['independent', 'overlap'],
+                        help='Document encoding strategy. Currently we only have independent for RED')
     parser.add_argument('-proc_strategy', default='duplicate', type=str,
-                        choices=['default', 'duplicate'], help='Data processing strategy.')
-    parser.add_argument('-pretrained_bert_dir', default='../../../litbank_coref/resources/', type=str,
+                        choices=['default', 'duplicate'],
+                        help='Document processing strategy. In duplicate we add [DUPLICATE] tags to document.')
+    parser.add_argument('-pretrained_bert_dir', default='../../litbank_coref/resources/', type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
     parser.add_argument('-top_span_ratio', default=0.2, type=float,
                         help='Ratio of top spans proposed as mentions.')
 
-    parser.add_argument('-ment_emb', default='endpoint', choices=['attn', 'max', 'endpoint'],
+    parser.add_argument('-ment_emb', default='attn', choices=['attn', 'max', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
     parser.add_argument('-max_span_width',
                         help='Max span width', default=10, type=int)
@@ -48,12 +50,12 @@ def main():
                         help='MLP size used in the model')
 
     # Training params
-    parser.add_argument('--batch_size', '-bsize',
-                        help='Batch size', default=1, type=int)
     parser.add_argument('-num_train_docs', default=None, type=int,
                         help='Number of training docs.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
+    parser.add_argument('-max_training_segments', default=None, type=int,
+                        help='Max. number of BERT segments in a document.')
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=20, type=int)
     parser.add_argument('-seed', default=0,
@@ -94,16 +96,7 @@ def main():
     if not path.exists(log_dir):
         os.makedirs(log_dir)
 
-    # Slurm args
-    if not args.slurm_id:
-        tensorboard_process = subprocess.Popen(['tensorboard', '--logdir',  log_dir],
-                                               stdout=subprocess.PIPE, stderr=None)
-
-    try:
-        Experiment(**vars(args))
-    finally:
-        if not args.slurm_id:
-            tensorboard_process.kill()
+    Experiment(**vars(args))
 
 
 if __name__ == "__main__":

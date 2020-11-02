@@ -166,23 +166,23 @@ class Experiment:
             # Update epochs done
             self.train_info['epoch'] = epoch + 1
             # Validation performance
-            recall, threshold = self.eval_model()
-            scheduler['other'].step(recall)
+            fscore, threshold = self.eval_model()
+            scheduler['other'].step(fscore)
 
             # Update model if validation performance improves
-            if recall > self.train_info['val_perf']:
-                self.train_info['val_perf'] = recall
+            if fscore > self.train_info['val_perf']:
+                self.train_info['val_perf'] = fscore
                 self.train_info['threshold'] = threshold
                 logging.info('Saving best model')
-                self.save_model(self.best_model_path)
+                self.save_model(self.best_model_path, best_model=True)
 
             # Save model
             self.save_model(self.model_path)
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
-            logging.info("Epoch: %d, Time: %.2f, Recall: %.3f, Max Recall: %.3f"
-                         % (epoch + 1, elapsed_time, recall, self.train_info['val_perf']))
+            logging.info("Epoch: %d, Time: %.2f, Macro F-score: %.3f, Max F-score: %.3f"
+                         % (epoch + 1, elapsed_time, fscore, self.train_info['val_perf']))
 
             sys.stdout.flush()
             if not self.slurm_id:
@@ -208,7 +208,6 @@ class Experiment:
             # Output file to write the outputs
             agg_results = {}
 
-            max_fscore = {}
             if threshold is None:
                 threshold = {}
             for dev_example in dev_examples:
@@ -266,12 +265,15 @@ class Experiment:
         print(total_recall, total_gold)
         overall_recall = (sum(total_recall.values())/sum(total_gold.values()))
         logging.info("Recall: %.3f" % overall_recall)
-        return overall_recall, threshold
+        macro_fscore = sum([fscore for fscore in max_fscore.values()])/len(max_fscore)
+        logging.info("Macro F-score: %.3f" % macro_fscore)
+
+        return macro_fscore, threshold
 
     def final_eval(self, model_dir):
         """Evaluate the model on train, dev, and test"""
         # Test performance  - Load best model
-        self.load_model(self.best_model_path)
+        self.load_model(self.best_model_path, best_model=True)
         logging.info("Loading best model after epoch: %d" %
                      self.train_info['epoch'])
         logging.info(f"Threshold: {self.train_info['threshold']}")
@@ -297,19 +299,21 @@ class Experiment:
         if not self.slurm_id:
             self.writer.close()
 
-    def load_model(self, location):
+    def load_model(self, location, best_model=False):
         checkpoint = torch.load(location)
         self.model.load_state_dict(checkpoint['model'], strict=False)
-        param_groups = ['other', 'doc'] if self.finetune else ['other']
-        for param_group in param_groups:
-            self.optimizer[param_group].load_state_dict(
-                checkpoint['optimizer'][param_group])
-            self.optim_scheduler[param_group].load_state_dict(
-                checkpoint['scheduler'][param_group])
         self.train_info = checkpoint['train_info']
         torch.set_rng_state(checkpoint['rng_state'])
 
-    def save_model(self, location):
+        if not best_model:
+            param_groups = ['other', 'doc'] if self.finetune else ['other']
+            for param_group in param_groups:
+                self.optimizer[param_group].load_state_dict(
+                    checkpoint['optimizer'][param_group])
+                self.optim_scheduler[param_group].load_state_dict(
+                    checkpoint['scheduler'][param_group])
+
+    def save_model(self, location, best_model=False):
         """Save model"""
         model_state_dict = OrderedDict(self.model.state_dict())
         if not self.finetune:
@@ -323,10 +327,12 @@ class Experiment:
             'optimizer': {},
             'scheduler': {},
         }
-        param_groups = ['other', 'doc'] if self.finetune else ['other']
-        for param_group in param_groups:
-            save_dict['optimizer'][param_group] = self.optimizer[param_group].state_dict()
-            save_dict['scheduler'][param_group] = self.optim_scheduler[param_group].state_dict()
+
+        if not best_model:
+            param_groups = ['other', 'doc'] if self.finetune else ['other']
+            for param_group in param_groups:
+                save_dict['optimizer'][param_group] = self.optimizer[param_group].state_dict()
+                save_dict['scheduler'][param_group] = self.optim_scheduler[param_group].state_dict()
 
         torch.save(save_dict, location)
         logging.info(f"Model saved at: {location}")

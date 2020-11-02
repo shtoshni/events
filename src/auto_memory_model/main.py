@@ -30,7 +30,8 @@ def main():
     parser.add_argument('-doc_enc', default='independent', type=str,
                         choices=['independent', 'overlap'], help='BERT model type')
     parser.add_argument('-proc_strategy', default='duplicate', type=str,
-                        choices=['default', 'duplicate'], help='Processing strategy.')
+                        choices=['default', 'duplicate'],
+                        help='Document processing strategy. In duplicate we add [DUPLICATE] tags to document.')
     parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/litbank_coref/resources", type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
