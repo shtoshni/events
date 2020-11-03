@@ -8,12 +8,12 @@ from pytorch_utils.modules import MLP
 from red_utils.constants import ELEM_TYPE_TO_IDX, IDX_TO_ELEM_TYPE, DOC_TYPE_TO_IDX
 from red_utils.utils import get_doc_type
 
-ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.25, 'EVENT': 0.2}
+ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.3, 'EVENT': 0.2}
 
 
 class BaseController(nn.Module):
     def __init__(self,
-                 dropout_rate=0.5, max_span_width=20, top_span_ratio=0.4,
+                 dropout_rate=0.5, max_span_width=20,
                  ment_emb='endpoint', doc_enc='independent', mlp_size=1000,
                  emb_size=20, sample_invalid=1.0, label_smoothing_wt=0.0,
                  dataset='red',  focus_group='both',
@@ -22,7 +22,6 @@ class BaseController(nn.Module):
         self.dataset = dataset
 
         self.max_span_width = max_span_width
-        self.top_span_ratio = top_span_ratio
         self.sample_invalid = sample_invalid
         self.label_smoothing_wt = label_smoothing_wt
 
@@ -48,7 +47,7 @@ class BaseController(nn.Module):
         self.other.doc_type_emb = nn.Embedding(3, self.emb_size)
 
         self.other.mention_mlp = nn.ModuleDict()
-        for elem_type in IDX_TO_ELEM_TYPE[:2]:
+        for elem_type in IDX_TO_ELEM_TYPE:
             self.other.mention_mlp[elem_type] = MLP(
                 input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
                 hidden_size=self.mlp_size, output_size=1, num_hidden_layers=1,
@@ -147,12 +146,48 @@ class BaseController(nn.Module):
         ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends)
 
         predictions = OrderedDict()
-        for ment_idx, ment_type in enumerate(IDX_TO_ELEM_TYPE):
+
+        if self.focus_group == 'joint':
+            elem_types = IDX_TO_ELEM_TYPE
+        else:
+            elem_types = [self.focus_group]
+
+        for ment_type in elem_types:
+            ment_idx = ELEM_TYPE_TO_IDX[ment_type]
+            filt_gold_mentions = self.get_gold_mentions(example["clusters"], num_words, flat_cand_mask, ment_idx)
+
             mention_logits = torch.squeeze(self.other.mention_mlp[ment_type](span_embs), dim=-1)
             mention_logits += ment_width_scores
 
-            k = int(self.top_span_ratio * num_words)
+            k = int(ELEM_TO_TOP_SPAN_RATIO[ment_type] * num_words)
             topk_indices = torch.topk(mention_logits, k)[1]
+
+            topk_indices_mask = torch.zeros_like(mention_logits).cuda()
+            topk_indices_mask[topk_indices] = 1
+
+            # if not self.training:
+            #     diff_vec = filt_gold_mentions - filt_gold_mentions * topk_indices_mask
+            #     if torch.sum(diff_vec):
+            #         print(example["doc_key"], ment_type, torch.sum(diff_vec))
+            #         doc = []
+            #         for sentence in example["sentences"]:
+            #             doc.extend(sentence)
+            #
+            #         top_k_starts = filt_cand_starts[topk_indices]
+            #         top_k_ends = filt_cand_ends[topk_indices]
+            #         top_k_pairs = torch.stack([top_k_starts, top_k_ends], dim=1).tolist()
+            #
+            #         top_k_set = set()
+            #         for pair in top_k_pairs:
+            #             top_k_set.add(tuple(pair))
+            #
+            #         # print(sorted(top_k_pairs))
+            #         for cluster in example["clusters"]:
+            #             for span_start, span_end, span_type in cluster:
+            #                 if span_type == ment_idx:
+            #                     span_tuple = (span_start, span_end)
+            #                     if span_tuple not in top_k_set:
+            #                         print(span_tuple, doc[span_start: span_end + 1])
 
             topk_starts = filt_cand_starts[topk_indices]
             topk_ends = filt_cand_ends[topk_indices]
@@ -162,8 +197,8 @@ class BaseController(nn.Module):
             sort_scores = topk_starts + 1e-5 * topk_ends
             _, sorted_indices = torch.sort(sort_scores, 0)
 
-            predictions[ment_idx] = (topk_starts[sorted_indices], topk_ends[sorted_indices],
-                                     topk_scores[sorted_indices])
+            predictions[ment_type] = (topk_starts[sorted_indices], topk_ends[sorted_indices],
+                                      topk_scores[sorted_indices])
 
         return predictions
 
@@ -175,10 +210,10 @@ class BaseController(nn.Module):
         mention_emb_list = ()
         pred_scores_list = ()
 
-        for ment_idx, ment_type in enumerate(IDX_TO_ELEM_TYPE):
-            pred_starts, pred_ends, pred_scores = predictions[ment_idx]
+        for ment_type in predictions:
+            pred_starts, pred_ends, pred_scores = predictions[ment_type]
             pred_mentions = pred_mentions + list(zip(pred_starts.tolist(), pred_ends.tolist(),
-                                                     [ment_idx] * pred_starts.shape[0]))
+                                                     [ELEM_TYPE_TO_IDX[ment_type]] * pred_starts.shape[0]))
             pred_scores_list = pred_scores_list + torch.unbind(torch.unsqueeze(pred_scores, dim=1))
 
             mention_embs = self.get_span_embeddings(encoded_doc, pred_starts, pred_ends, get_doc_type(example))

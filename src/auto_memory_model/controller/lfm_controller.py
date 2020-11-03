@@ -151,8 +151,6 @@ class LearnedFixedMemController(BaseController):
             self.get_mention_embs_and_actions(example)
 
         metadata = {}
-        if self.dataset == 'ontonotes':
-            metadata = {'genre': self.get_genre_embedding(example)}
 
         rand_fl_list = np.random.random(len(mention_emb_list))
         follow_gt = self.training or teacher_forcing
@@ -175,7 +173,6 @@ class LearnedFixedMemController(BaseController):
                 action_prob_tens = torch.stack(coref_new_list, dim=0).cuda()  # M x (cells + 1)
                 action_indices = self.action_to_coref_new_idx(gt_actions, rand_fl_list, follow_gt)
 
-                # coref_loss = self.loss_fn['coref'](action_prob_tens, action_indices)
                 coref_loss = torch.sum(
                     label_smoothing_fn(action_prob_tens, action_indices.unsqueeze(dim=1), weight=self.coref_loss_wts))
                 loss['coref'] = coref_loss
@@ -185,8 +182,6 @@ class LearnedFixedMemController(BaseController):
                 new_ignore_indices = self.new_ignore_tuple_to_idx(gt_actions, rand_fl_list, follow_gt)
                 over_loss = self.loss_fn['over'](new_ignore_tens, new_ignore_indices)
 
-                # over_loss = torch.sum(
-                #     label_smoothing_fn(new_ignore_tens, new_ignore_indices.unsqueeze(dim=1), weight=self.over_loss_wts))
                 loss['over'] = over_loss
                 loss['total'] = (loss['coref'] + self.over_loss_wt * loss['over'])
             return loss, action_list, pred_mentions, gt_actions

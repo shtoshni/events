@@ -30,7 +30,7 @@ class Experiment:
                  focus_group='joint',
                  seed=0, init_lr=5e-4, ft_lr=2e-5, finetune=False,
                  max_gradient_norm=1.0,
-                 max_epochs=20, max_segment_len=128, eval=False, num_train_docs=None,
+                 max_epochs=20, max_segment_len=512, eval=False, num_train_docs=None,
                  mem_type='unbounded', no_singletons=False,
                  # Other params
                  slurm_id=None, **kwargs):

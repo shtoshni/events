@@ -33,6 +33,8 @@ class BaseMemory(nn.Module):
         self.action_str_to_idx = {'c': 0, 'o': 1, 'i': 2, 'n': 3, '<s>': 4}
         self.action_idx_to_str = ['c', 'o', 'i', 'n', '<s>']
 
+        self.query_projector = nn.Linear(self.hsize + self.emb_size, self.mem_size)
+
         self.mem_coref_mlp = MLP(3 * self.mem_size + self.num_feats * self.emb_size, self.mlp_size, 1,
                                  num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
 

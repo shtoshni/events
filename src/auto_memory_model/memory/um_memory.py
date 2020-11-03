@@ -47,7 +47,7 @@ class UnboundedMemory(BaseMemory):
         else:
             raise NotImplementedError
 
-    def forward(self, mention_emb_list, mention_scores, gt_actions, metadata, rand_fl_list,
+    def forward(self, mention_emb_list, mention_scores, pred_mentions, gt_actions, metadata, rand_fl_list,
                 teacher_forcing=False):
         # Initialize memory
         mem_vectors, ent_counter, last_mention_idx = self.initialize_memory()
@@ -59,11 +59,14 @@ class UnboundedMemory(BaseMemory):
 
         follow_gt = self.training or teacher_forcing
 
-        for ment_idx, (ment_emb, ment_score, (gt_cell_idx, gt_action_str)) in \
-                enumerate(zip(mention_emb_list, mention_scores, gt_actions)):
-            query_vector = ment_emb
+        for ment_idx, (ment_emb,  (span_start, span_end, ment_type), ment_score, (gt_cell_idx, gt_action_str)) in \
+                enumerate(zip(mention_emb_list, pred_mentions, mention_scores, gt_actions)):
+            # query_vector = ment_emb
             metadata['last_action'] = self.action_str_to_idx[last_action_str]
             feature_embs = self.get_feature_embs(ment_idx, last_mention_idx, ent_counter, metadata)
+            ment_type_emb = self.ment_type_emb(torch.tensor(ment_type).long().cuda())
+            query_vector = self.query_projector(
+                torch.cat([ment_emb, ment_type_emb], dim=0))
 
             if not (follow_gt and gt_action_str == 'i' and rand_fl_list[ment_idx] > self.sample_invalid):
                 # This part of the code executes in the following cases:

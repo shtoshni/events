@@ -57,8 +57,6 @@ def main():
                         help='Memory size used in the model')
     parser.add_argument('-mlp_size', default=1000, type=int,
                         help='MLP size used in the model')
-    parser.add_argument('-mlp_depth', default=1, type=int,
-                        help='Number of hidden layers in other MLPs')
     parser.add_argument('-use_srl', default=None, choices=['joint', 'event'], type=str,
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
     parser.add_argument('-entity_rep', default='wt_avg', type=str,
@@ -104,11 +102,11 @@ def main():
     opt_dict = OrderedDict()
     # Only include important options in hash computation
     imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc", 'proc_strategy',  # Encoder params
-                'mem_type', 'num_cells', 'mem_size', 'mlp_size', 'mlp_depth',  # Memory params
+                'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
                 'use_srl',  # SRL vector
                 'focus_group',  # Mentions of particular focus
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
-                'dataset', 'num_train_docs', 'sample_singletons', 'max_training_segments',
+                'dataset', 'num_train_docs', 'sample_invalid', 'max_training_segments',
                 'over_loss_wt',  "new_ent_wt",  # Training params
                 ]
     for key, val in vars(args).items():

@@ -20,7 +20,7 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 class Experiment:
     def __init__(self, data_dir=None, dataset='red',
-                 model_dir=None, best_model_dir=None, pretrained_model=None,
+                 model_dir=None, best_model_dir=None,
                  # Model params
                  seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False,
                  max_gradient_norm=1.0,
@@ -30,7 +30,6 @@ class Experiment:
                  slurm_id=None,
                  **kwargs):
 
-        self.pretrained_model = pretrained_model
         self.slurm_id = slurm_id
         # Set the random seed first
         self.seed = seed
@@ -67,18 +66,10 @@ class Experiment:
         utils.print_model_info(self.model)
 
         if not eval:
-            if self.pretrained_model is not None:
-                model_state_dict = torch.load(self.pretrained_model)
-                print(model_state_dict.keys())
-                self.model.load_state_dict(model_state_dict, strict=False)
-                self.eval_model(split='valid')
-                # self.eval_model(split='test')
-                sys.exit()
-            else:
-                self.train(max_epochs=max_epochs,
-                           max_gradient_norm=max_gradient_norm)
+            self.train(max_epochs=max_epochs, max_gradient_norm=max_gradient_norm)
+
         # Finally evaluate model
-        self.final_eval(model_dir)
+        self.final_eval()
 
     def initialize_setup(self, init_lr, ft_lr=2e-5):
         """Initialize model and training info."""
@@ -105,9 +96,6 @@ class Experiment:
         if not path.exists(self.model_path):
             torch.manual_seed(self.seed)
             np.random.seed(self.seed)
-            if self.pretrained_model is not None:
-                checkpoint = torch.load(self.pretrained_model)
-                self.model.load_state_dict(checkpoint, strict=False)
         else:
             logging.info('Loading previous model: %s' % self.model_path)
             # Load model
@@ -194,7 +182,7 @@ class Experiment:
 
         return total_corr, torch.sum(pred_mentions), torch.sum(gold_mentions)
 
-    def eval_model(self, split='valid', threshold=None):
+    def eval_model(self, split='valid', threshold=None, final_eval=False):
         """Eval model"""
         # Set the random seed to get consistent results
         model = self.model
@@ -211,7 +199,7 @@ class Experiment:
             if threshold is None:
                 threshold = {}
             for dev_example in dev_examples:
-                preds, y, cand_starts, cand_ends, recall_dict = model(dev_example)
+                preds, y, cand_starts, cand_ends, recall_dict = model(dev_example, final_eval=final_eval)
 
                 for ment_idx, ment_type in enumerate(IDX_TO_ELEM_TYPE[:2]):
                     total_gold[ment_type] += torch.sum(y[ment_type]).item()
@@ -270,7 +258,7 @@ class Experiment:
 
         return macro_fscore, threshold
 
-    def final_eval(self, model_dir):
+    def final_eval(self):
         """Evaluate the model on train, dev, and test"""
         # Test performance  - Load best model
         self.load_model(self.best_model_path, best_model=True)
@@ -286,7 +274,7 @@ class Experiment:
                 logging.info('\n')
                 logging.info('%s' % split)
                 split_f1, _ = self.eval_model(
-                    split.lower(), threshold=threshold)
+                    split.lower(), threshold=threshold, final_eval=True)
                 logging.info('Calculated Recall: %.3f' % split_f1)
 
                 f.write("%s\t%.4f\n" % (split, split_f1))

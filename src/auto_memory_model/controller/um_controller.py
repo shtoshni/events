@@ -118,7 +118,7 @@ class UnboundedMemController(BaseController):
             rand_fl_list = np.zeros_like(rand_fl_list)
 
         action_prob_list, action_list = self.memory_net(
-            mention_emb_list, mention_score_list, gt_actions, metadata, rand_fl_list,
+            mention_emb_list, mention_score_list, pred_mentions, gt_actions, metadata, rand_fl_list,
             teacher_forcing=teacher_forcing)
 
         coref_loss = 0.0
