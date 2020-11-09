@@ -150,7 +150,7 @@ class BaseController(nn.Module):
         if self.focus_group == 'joint':
             elem_types = IDX_TO_ELEM_TYPE
         else:
-            elem_types = [self.focus_group]
+            elem_types = [self.focus_group.upper()]
 
         all_topk_starts = None
         all_topk_ends = None

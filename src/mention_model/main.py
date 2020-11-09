@@ -37,8 +37,6 @@ def main():
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
-    parser.add_argument('-top_span_ratio', default=0.2, type=float,
-                        help='Ratio of top spans proposed as mentions.')
 
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'max', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
@@ -54,7 +52,7 @@ def main():
                         help='Number of training docs.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
-    parser.add_argument('-max_training_segments', default=None, type=int,
+    parser.add_argument('-max_training_segments', default=3, type=int,
                         help='Max. number of BERT segments in a document.')
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=20, type=int)
@@ -64,10 +62,8 @@ def main():
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Initial learning rate",
                         default=5e-5, type=float)
-    parser.add_argument('-finetune', help="Finetune document encoder",
-                        default=False, action="store_true")
-    parser.add_argument('-checkpoint', help="Use checkpoint",
-                        default=False, action="store_true")
+    parser.add_argument('-no_finetune', default=True, dest="finetune",
+                        action="store_false", help="Fine-tuning document encoder")
     parser.add_argument('-eval', help="Evaluate model",
                         default=False, action="store_true")
     parser.add_argument('-slurm_id', help="Slurm ID",
