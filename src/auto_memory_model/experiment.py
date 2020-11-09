@@ -14,7 +14,7 @@ from red_utils.utils import load_data
 from coref_utils.utils import mention_to_cluster
 from coref_utils.metrics import CorefEvaluator
 import pytorch_utils.utils as utils
-from auto_memory_model.controller import LearnedFixedMemController, LRUController, UnboundedMemController
+from auto_memory_model.controller.utils import pick_controller
 
 
 EPS = 1e-8
@@ -63,12 +63,15 @@ class Experiment:
 
         # Initialize model and training metadata
         self.finetune = finetune
-        if mem_type == 'learned':
-            self.model = LearnedFixedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
-        elif mem_type == 'lru':
-            self.model = LRUController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
-        elif mem_type == 'unbounded':
-            self.model = UnboundedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
+
+        self.model = pick_controller(mem_type=mem_type, focus_group=focus_group, finetune=finetune, **kwargs)
+
+        # if mem_type == 'learned':
+        #     self.model = LearnedFixedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
+        # elif mem_type == 'lru':
+        #     self.model = LRUController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
+        # elif mem_type == 'unbounded':
+        #     self.model = UnboundedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
 
         self.max_epochs = max_epochs
         self.train_info, self.optimizer, self.optim_scheduler, self.optimizer_params = {}, {}, {}, {}

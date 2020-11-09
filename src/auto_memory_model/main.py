@@ -53,7 +53,7 @@ def main():
 
     # Clustering variables
     parser.add_argument('-mem_type', default='unbounded',
-                        choices=['learned', 'lru', 'unbounded'],
+                        choices=['alternate', 'unbounded'],
                         help="Memory type.")
     parser.add_argument('-num_cells', default=20, type=int,
                         help="Number of memory cells.")

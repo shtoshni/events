@@ -1,3 +1,3 @@
 from auto_memory_model.controller.lfm_controller import LearnedFixedMemController
-from auto_memory_model.controller.lru_controller import LRUController
+from auto_memory_model.controller.alternate_controller import AlternateMemController
 from auto_memory_model.controller.um_controller import UnboundedMemController

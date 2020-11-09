@@ -189,7 +189,7 @@ class BaseController(nn.Module):
                                            torch.tensor([ment_idx] * sorted_indices.shape[0]).cuda()], dim=0)
 
         if self.ment_ordering == 'document':
-            # Order mentions by thier order in document
+            # Order mentions by their order in document
             sort_scores = all_topk_starts + 1e-5 * all_topk_ends + 1e-5 * all_ment_type
             _, sorted_indices = torch.sort(sort_scores, dim=0)
 
