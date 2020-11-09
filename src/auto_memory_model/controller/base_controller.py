@@ -14,13 +14,15 @@ ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.3, 'EVENT': 0.2}
 class BaseController(nn.Module):
     def __init__(self,
                  dropout_rate=0.5, max_span_width=20,
-                 ment_emb='endpoint', doc_enc='independent', mlp_size=1000,
-                 emb_size=20, sample_invalid=1.0, label_smoothing_wt=0.0,
+                 ment_emb='endpoint', doc_enc='independent', ment_ordering='ment_type',
+                 mlp_size=1000, emb_size=20,
+                 sample_invalid=1.0, label_smoothing_wt=0.0,
                  dataset='red',  focus_group='both',
                  **kwargs):
         super(BaseController, self).__init__()
         self.dataset = dataset
 
+        self.ment_ordering = ment_ordering
         self.max_span_width = max_span_width
         self.sample_invalid = sample_invalid
         self.label_smoothing_wt = label_smoothing_wt
@@ -145,17 +147,18 @@ class BaseController(nn.Module):
         span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends, get_doc_type(example))
         ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends)
 
-        predictions = OrderedDict()
-
         if self.focus_group == 'joint':
             elem_types = IDX_TO_ELEM_TYPE
         else:
             elem_types = [self.focus_group]
 
+        all_topk_starts = None
+        all_topk_ends = None
+        all_topk_scores = None
+        all_ment_type = None
+
         for ment_type in elem_types:
             ment_idx = ELEM_TYPE_TO_IDX[ment_type]
-            filt_gold_mentions = self.get_gold_mentions(example["clusters"], num_words, flat_cand_mask, ment_idx)
-
             mention_logits = torch.squeeze(self.other.mention_mlp[ment_type](span_embs), dim=-1)
             mention_logits += ment_width_scores
 
@@ -165,59 +168,45 @@ class BaseController(nn.Module):
             topk_indices_mask = torch.zeros_like(mention_logits).cuda()
             topk_indices_mask[topk_indices] = 1
 
-            # if not self.training:
-            #     diff_vec = filt_gold_mentions - filt_gold_mentions * topk_indices_mask
-            #     if torch.sum(diff_vec):
-            #         print(example["doc_key"], ment_type, torch.sum(diff_vec))
-            #         doc = []
-            #         for sentence in example["sentences"]:
-            #             doc.extend(sentence)
-            #
-            #         top_k_starts = filt_cand_starts[topk_indices]
-            #         top_k_ends = filt_cand_ends[topk_indices]
-            #         top_k_pairs = torch.stack([top_k_starts, top_k_ends], dim=1).tolist()
-            #
-            #         top_k_set = set()
-            #         for pair in top_k_pairs:
-            #             top_k_set.add(tuple(pair))
-            #
-            #         # print(sorted(top_k_pairs))
-            #         for cluster in example["clusters"]:
-            #             for span_start, span_end, span_type in cluster:
-            #                 if span_type == ment_idx:
-            #                     span_tuple = (span_start, span_end)
-            #                     if span_tuple not in top_k_set:
-            #                         print(span_tuple, doc[span_start: span_end + 1])
-
             topk_starts = filt_cand_starts[topk_indices]
             topk_ends = filt_cand_ends[topk_indices]
             topk_scores = mention_logits[topk_indices]
 
             # Sort the mentions by (start) and tiebreak with (end)
             sort_scores = topk_starts + 1e-5 * topk_ends
-            _, sorted_indices = torch.sort(sort_scores, 0)
+            _, sorted_indices = torch.sort(sort_scores, dim=0)
 
-            predictions[ment_type] = (topk_starts[sorted_indices], topk_ends[sorted_indices],
-                                      topk_scores[sorted_indices])
+            if all_topk_starts is None:
+                all_topk_starts = topk_starts[sorted_indices]
+                all_topk_ends = topk_ends[sorted_indices]
+                all_topk_scores = topk_scores[sorted_indices]
+                all_ment_type = torch.tensor([ment_idx] * sorted_indices.shape[0]).cuda()
+            else:
+                all_topk_starts = torch.cat([all_topk_starts, topk_starts[sorted_indices]], dim=0)
+                all_topk_ends = torch.cat([all_topk_ends, topk_ends[sorted_indices]], dim=0)
+                all_topk_scores = torch.cat([all_topk_scores, topk_scores[sorted_indices]], dim=0)
+                all_ment_type = torch.cat([all_ment_type,
+                                           torch.tensor([ment_idx] * sorted_indices.shape[0]).cuda()], dim=0)
 
-        return predictions
+        if self.ment_ordering == 'document':
+            # Order mentions by thier order in document
+            sort_scores = all_topk_starts + 1e-5 * all_topk_ends + 1e-5 * all_ment_type
+            _, sorted_indices = torch.sort(sort_scores, dim=0)
+
+            return (all_topk_starts[sorted_indices], all_topk_ends[sorted_indices],
+                    all_topk_scores[sorted_indices], all_ment_type[sorted_indices])
+        else:
+            # Else mentions remain ordered by their type
+            return (all_topk_starts, all_topk_ends, all_topk_scores, all_ment_type)
 
     def get_mention_embs_and_actions(self, example):
         encoded_doc = self.doc_encoder(example)
-        predictions = self.get_pred_mentions(example, encoded_doc)
+        pred_starts, pred_ends, pred_scores, pred_ment_type = self.get_pred_mentions(example, encoded_doc)
 
-        pred_mentions = []
-        mention_emb_list = ()
-        pred_scores_list = ()
-
-        for ment_type in predictions:
-            pred_starts, pred_ends, pred_scores = predictions[ment_type]
-            pred_mentions = pred_mentions + list(zip(pred_starts.tolist(), pred_ends.tolist(),
-                                                     [ELEM_TYPE_TO_IDX[ment_type]] * pred_starts.shape[0]))
-            pred_scores_list = pred_scores_list + torch.unbind(torch.unsqueeze(pred_scores, dim=1))
-
-            mention_embs = self.get_span_embeddings(encoded_doc, pred_starts, pred_ends, get_doc_type(example))
-            mention_emb_list = mention_emb_list + torch.unbind(mention_embs, dim=0)
+        pred_mentions = list(zip(pred_starts.tolist(), pred_ends.tolist(), pred_ment_type.tolist()))
+        mention_embs = self.get_span_embeddings(encoded_doc, pred_starts, pred_ends, get_doc_type(example))
+        mention_emb_list = torch.unbind(mention_embs, dim=0)
+        pred_scores_list = torch.unbind(torch.unsqueeze(pred_scores, dim=1))
 
         gt_actions = self.get_actions(pred_mentions, example["clusters"])
         return pred_mentions, gt_actions, mention_emb_list, pred_scores_list

@@ -1,4 +1,18 @@
-from red_utils.constants import  ELEM_TYPE_TO_IDX
+from red_utils.constants import ELEM_TYPE_TO_IDX, IDX_TO_ELEM_TYPE
+
+
+def get_cluster_type(cluster):
+    ment_types = list(zip(*cluster))[2]
+    ment_type_frac = sum(ment_types)/len(ment_types)
+    if ment_type_frac < 0.5:
+        # Majority of spans are entities
+        return [IDX_TO_ELEM_TYPE[0]]
+    elif ment_type_frac == 0.5:
+        # Split between event and entity spans
+        return [IDX_TO_ELEM_TYPE[0], IDX_TO_ELEM_TYPE[1]]
+    else:
+        # Entity spans
+        return [IDX_TO_ELEM_TYPE[1]]
 
 
 def mention_to_cluster(clusters, threshold=1, focus_group='joint'):
@@ -6,17 +20,15 @@ def mention_to_cluster(clusters, threshold=1, focus_group='joint'):
                 for cluster in clusters if len(cluster) >= threshold]
     filt_clusters = []
     for cluster in clusters:
-        mention = cluster[0]
-        if (focus_group == 'entity') and (mention[2] == ELEM_TYPE_TO_IDX['ENTITY']):
+        mention_type = get_cluster_type(cluster)
+        if (focus_group == 'entity') and ('ENTITY' in mention_type):
             filt_clusters.append(cluster)
 
-        if (focus_group == 'event') and (mention[2] == ELEM_TYPE_TO_IDX['EVENT']):
+        if (focus_group == 'event') and ('EVENT' in mention_type):
             filt_clusters.append(cluster)
 
         if focus_group == 'joint':
             filt_clusters.append(cluster)
-
-    # print(focus_group, len(clusters), len(filt_clusters))
 
     mention_to_cluster_dict = {}
     for cluster in filt_clusters:

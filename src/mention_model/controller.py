@@ -5,7 +5,7 @@ from auto_memory_model.controller.base_controller import BaseController
 from red_utils.constants import IDX_TO_ELEM_TYPE
 from red_utils.utils import get_doc_type
 
-ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.25, 'EVENT': 0.2}
+ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.3, 'EVENT': 0.2}
 
 
 class Controller(BaseController):
@@ -30,9 +30,6 @@ class Controller(BaseController):
         filt_gold_mentions_dict = {}
         recall = {}
         for ment_idx, ment_type in enumerate(IDX_TO_ELEM_TYPE):
-            if ment_type == 'BOTH':
-                continue
-
             mention_logits = torch.squeeze(self.other.mention_mlp[ment_type](span_embs), dim=-1)
             mention_logits += ment_width_scores
 

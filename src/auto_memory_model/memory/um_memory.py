@@ -5,18 +5,20 @@ from auto_memory_model.memory.base_fixed_memory import BaseMemory
 class UnboundedMemory(BaseMemory):
     def __init__(self, **kwargs):
         super(UnboundedMemory, self).__init__(**kwargs)
+        self.mem_vectors = torch.zeros(1, self.mem_size).cuda()
+        self.ent_counter = torch.tensor([0.0]).cuda()
+        self.last_mention_idx = torch.zeros(1).long().cuda()
+        self.cluster_type = torch.tensor([-1]).cuda()
 
     def initialize_memory(self):
         """Initialize the memory to null with only 1 memory cell to begin with."""
-        mem = torch.zeros(1, self.mem_size).cuda()
-        ent_counter = torch.tensor([0.0]).cuda()
-        last_mention_idx = torch.zeros(1).long().cuda()
-        return mem, ent_counter, last_mention_idx
+        self.mem_vectors = torch.zeros(1, self.mem_size).cuda()
+        self.ent_counter = torch.tensor([0.0]).cuda()
+        self.last_mention_idx = torch.zeros(1).long().cuda()
+        self.cluster_type = torch.tensor([-1]).cuda()
 
-    def predict_action(self, query_vector, ment_score, mem_vectors,
-                       ent_counter, feature_embs):
-        coref_new_scores = self.get_coref_new_scores(
-            query_vector, ment_score, mem_vectors, ent_counter, feature_embs)
+    def predict_action(self, query_vector, ment_type, ment_score, feature_embs):
+        coref_new_scores = self.get_coref_new_scores(query_vector, ment_type, ment_score, feature_embs)
 
         # Negate the mention score
         not_a_ment_score = -ment_score
@@ -50,7 +52,7 @@ class UnboundedMemory(BaseMemory):
     def forward(self, mention_emb_list, mention_scores, pred_mentions, gt_actions, metadata, rand_fl_list,
                 teacher_forcing=False):
         # Initialize memory
-        mem_vectors, ent_counter, last_mention_idx = self.initialize_memory()
+        self.initialize_memory()
 
         action_logit_list = []
         action_list = []  # argmax actions
@@ -61,12 +63,14 @@ class UnboundedMemory(BaseMemory):
 
         for ment_idx, (ment_emb,  (span_start, span_end, ment_type), ment_score, (gt_cell_idx, gt_action_str)) in \
                 enumerate(zip(mention_emb_list, pred_mentions, mention_scores, gt_actions)):
-            # query_vector = ment_emb
             metadata['last_action'] = self.action_str_to_idx[last_action_str]
-            feature_embs = self.get_feature_embs(ment_idx, last_mention_idx, ent_counter, metadata)
+            feature_embs = self.get_feature_embs(ment_idx, metadata)
             ment_type_emb = self.ment_type_emb(torch.tensor(ment_type).long().cuda())
-            query_vector = self.query_projector(
-                torch.cat([ment_emb, ment_type_emb], dim=0))
+
+            if self.use_ment_type:
+                query_vector = ment_emb
+            else:
+                query_vector = self.query_projector(torch.cat([ment_emb, ment_type_emb], dim=0))
 
             if not (follow_gt and gt_action_str == 'i' and rand_fl_list[ment_idx] > self.sample_invalid):
                 # This part of the code executes in the following cases:
@@ -75,8 +79,7 @@ class UnboundedMemory(BaseMemory):
                 # (c) Training and mention is an invalid mention and randomly sampled float is less than invalid
                 # sampling probability
                 coref_new_scores, overwrite_ign_scores = self.predict_action(
-                    query_vector, ment_score, mem_vectors,
-                    ent_counter, feature_embs)
+                    query_vector, ment_type, ment_score, feature_embs)
 
                 pred_cell_idx, pred_action_str = self.interpret_scores(
                     coref_new_scores, overwrite_ign_scores, first_overwrite)
@@ -99,11 +102,12 @@ class UnboundedMemory(BaseMemory):
             if first_overwrite and action_str == 'o':
                 first_overwrite = False
                 # We start with a single empty memory cell
-                mem_vectors = torch.unsqueeze(query_vector, dim=0)
-                ent_counter = torch.tensor([1.0]).cuda()
-                last_mention_idx[0] = ment_idx
+                self.mem_vectors = torch.unsqueeze(query_vector, dim=0)
+                self.ent_counter = torch.tensor([1.0]).cuda()
+                self.last_mention_idx[0] = ment_idx
+                self.cluster_type[0] = ment_type
             else:
-                num_ents = mem_vectors.shape[0]
+                num_ents = self.mem_vectors.shape[0]
                 # Update the memory
                 cell_mask = (torch.arange(0, num_ents) == cell_idx).float().cuda()
                 mask = torch.unsqueeze(cell_mask, dim=1)
@@ -111,15 +115,17 @@ class UnboundedMemory(BaseMemory):
 
                 # print(cell_idx, action_str, mem_vectors.shape[0])
                 if action_str == 'c':
-                    mem_vectors = self.coref_update(mem_vectors, query_vector, cell_idx, mask, ent_counter)
+                    self.coref_update(query_vector, cell_idx, mask)
+                    self.ent_counter = self.ent_counter + cell_mask
+                    self.last_mention_idx[cell_idx] = ment_idx
 
-                    ent_counter = ent_counter + cell_mask
-                    last_mention_idx[cell_idx] = ment_idx
+                    if self.use_ment_type:
+                        assert (ment_type == self.cluster_type[cell_idx])
                 elif action_str == 'o':
                     # Append the new vector
-                    mem_vectors = torch.cat([mem_vectors, torch.unsqueeze(query_vector, dim=0)], dim=0)
-
-                    ent_counter = torch.cat([ent_counter, torch.tensor([1.0]).cuda()], dim=0)
-                    last_mention_idx = torch.cat([last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
+                    self.mem_vectors = torch.cat([self.mem_vectors, torch.unsqueeze(query_vector, dim=0)], dim=0)
+                    self.ent_counter = torch.cat([self.ent_counter, torch.tensor([1.0]).cuda()], dim=0)
+                    self.last_mention_idx = torch.cat([self.last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
+                    self.cluster_type = torch.cat([self.cluster_type, torch.tensor([ment_type]).cuda()], dim=0)
 
         return action_logit_list, action_list

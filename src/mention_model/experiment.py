@@ -73,17 +73,17 @@ class Experiment:
 
     def initialize_setup(self, init_lr, ft_lr=2e-5):
         """Initialize model and training info."""
-        model_params = list(self.model.other.parameters())
         self.optimizer['other'] = torch.optim.AdamW(
             self.model.other.parameters(), lr=init_lr, eps=1e-6)
+
+        self.optim_scheduler['other'] = get_linear_schedule_with_warmup(
+                self.optimizer['other'], num_warmup_steps=0,
+                num_training_steps=self.max_epochs * len(self.train_examples))
+
         if self.finetune:
             self.optimizer['doc'] = torch.optim.Adam(
                 self.model.doc_encoder.parameters(), lr=ft_lr, eps=1e-6)
 
-        self.optim_scheduler['other'] = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer['other'], mode='max', factor=0.1, patience=3,
-            min_lr=0.1 * init_lr, verbose=True)
-        if self.finetune:
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=len(self.train_examples) * min(5, self.max_epochs),
                 num_training_steps=self.max_epochs * len(self.train_examples))

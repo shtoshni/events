@@ -46,8 +46,12 @@ def main():
     parser.add_argument('-focus_group', default='joint', choices=['joint', 'entity', 'event'], type=str,
                         help='Mentions in focus. If both, the cluster all mentions, otherwise cluster particular type'
                              ' of mentions.')
+    parser.add_argument('-ment_ordering', default='ment_type', type=str,
+                        choices=['ment_type', 'document'],
+                        help='Order in which detected mentions are clustered. If ment_type, entity mentions are'
+                        'clustered before event mentions, otherwise mentions are ordered by their location in doc.')
 
-    # Memory variables
+    # Clustering variables
     parser.add_argument('-mem_type', default='unbounded',
                         choices=['learned', 'lru', 'unbounded'],
                         help="Memory type.")
@@ -59,6 +63,8 @@ def main():
                         help='MLP size used in the model')
     parser.add_argument('-use_srl', default=None, choices=['joint', 'event'], type=str,
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
+    parser.add_argument('-use_ment_type', default=False, action="store_true",
+                        help="If true, mentions are only merged with clusters of the same mention type.")
     parser.add_argument('-entity_rep', default='wt_avg', type=str,
                         choices=['learned_avg', 'wt_avg'], help='Entity representation.')
     parser.add_argument('-emb_size', default=20, type=int,
@@ -101,10 +107,10 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len', 'ment_emb', "doc_enc", 'proc_strategy',  # Encoder params
+    imp_opts = ['model_size', 'max_segment_len', 'doc_enc', 'proc_strategy',  # Document + Encoder params
+                'ment_emb', 'ment_ordering', 'focus_group',  # Mention params
                 'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
-                'use_srl',  # SRL vector
-                'focus_group',  # Mentions of particular focus
+                'use_srl',  'use_ment_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
                 'dataset', 'num_train_docs', 'sample_invalid', 'max_training_segments',
                 'over_loss_wt',  "new_ent_wt",  # Training params

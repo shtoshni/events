@@ -303,9 +303,13 @@ class Experiment:
                     log_example = dict(example)
                     log_example["gt_actions"] = gt_actions
                     log_example["pred_actions"] = action_list
+                    log_example["pred_mentions"] = pred_mentions
                     log_example["predicted_clusters"] = predicted_clusters
 
                     log_f.write(json.dumps(log_example) + "\n")
+
+                logging.info(f"Ground Truth Actions:  {gt_class_counter}")
+                logging.info(f"Predicted Actions: {pred_class_counter}")
 
                 result_dict = {}
                 # Print individual metrics
@@ -352,7 +356,7 @@ class Experiment:
         for key, val in vars(self.args).items():
             output_dict[key] = val
 
-        for split in ['train', 'dev', 'test']:  # , 'Test']:
+        for split in ['dev', 'train', 'test']:  # , 'Test']:
             logging.info('\n')
             logging.info('%s' % split.capitalize())
             result_dict = self.eval_model(split)

@@ -9,6 +9,7 @@ LOG2 = math.log(2)
 class BaseMemory(nn.Module):
     def __init__(self, hsize=300, mlp_size=200, mlp_depth=1, drop_module=None,
                  emb_size=20, entity_rep='max', dataset='red', sample_invalid=1.0,
+                 use_ment_type=False,
                  **kwargs):
         super(BaseMemory, self).__init__()
         self.dataset = dataset
@@ -18,6 +19,7 @@ class BaseMemory(nn.Module):
             self.num_feats = 3
 
         self.sample_invalid = sample_invalid
+        self.use_ment_type = use_ment_type
 
         self.hsize = hsize
         self.mem_size = hsize
@@ -33,7 +35,8 @@ class BaseMemory(nn.Module):
         self.action_str_to_idx = {'c': 0, 'o': 1, 'i': 2, 'n': 3, '<s>': 4}
         self.action_idx_to_str = ['c', 'o', 'i', 'n', '<s>']
 
-        self.query_projector = nn.Linear(self.hsize + self.emb_size, self.mem_size)
+        if not self.use_ment_type:
+            self.query_projector = nn.Linear(self.hsize + self.emb_size, self.mem_size)
 
         self.mem_coref_mlp = MLP(3 * self.mem_size + self.num_feats * self.emb_size, self.mlp_size, 1,
                                  num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
@@ -75,14 +78,17 @@ class BaseMemory(nn.Module):
         action_emb = self.action_str_to_idx[action_str]
         return self.last_action_emb(torch.tensor(action_emb).cuda())
 
-    @staticmethod
-    def get_coref_mask(ent_counter):
-        cell_mask = (ent_counter > 0.0).float()
+    def get_coref_mask(self, ment_type):
+        cell_mask = (self.ent_counter > 0.0).float()
+        if self.use_ment_type:
+            type_mask = (torch.tensor(ment_type).cuda() == self.cluster_type).float().cuda()
+            return cell_mask * type_mask
+
         return cell_mask
 
-    def get_feature_embs(self, ment_idx, last_mention_idx, ent_counter, metadata):
-        distance_embs = self.get_distance_emb(ment_idx - last_mention_idx)
-        counter_embs = self.get_counter_emb(ent_counter)
+    def get_feature_embs(self, ment_idx, metadata):
+        distance_embs = self.get_distance_emb(ment_idx - self.last_mention_idx)
+        counter_embs = self.get_counter_emb(self.ent_counter)
 
         feature_embs_list = [distance_embs, counter_embs]
 
@@ -121,36 +127,34 @@ class BaseMemory(nn.Module):
         feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
         return feature_embs
 
-    def get_coref_new_scores(self, query_vector, ment_score, mem_vectors,
-                             ent_counter, feature_embs):
+    def get_coref_new_scores(self, query_vector, ment_type, ment_score, feature_embs):
         # Repeat the query vector for comparison against all cells
-        num_cells = mem_vectors.shape[0]
+        num_cells = self.mem_vectors.shape[0]
         rep_query_vector = query_vector.repeat(num_cells, 1)  # M x H
 
         # Coref Score
-        pair_vec = torch.cat([mem_vectors, rep_query_vector, mem_vectors * rep_query_vector,
+        pair_vec = torch.cat([self.mem_vectors, rep_query_vector, self.mem_vectors * rep_query_vector,
                               feature_embs], dim=-1)
         pair_score = self.mem_coref_mlp(pair_vec)
 
         coref_score = torch.squeeze(pair_score, dim=-1) + ment_score  # M
 
-        coref_new_mask = torch.cat([self.get_coref_mask(ent_counter), torch.tensor([1.0]).cuda()], dim=0)
+        coref_new_mask = torch.cat([self.get_coref_mask(ment_type), torch.tensor([1.0]).cuda()], dim=0)
         coref_new_scores = torch.cat(([coref_score, torch.tensor([0.0]).cuda()]), dim=0)
 
         coref_new_not_scores = coref_new_scores * coref_new_mask + (1 - coref_new_mask) * (-1e4)
         return coref_new_not_scores
 
-    def coref_update(self, mem_vectors, query_vector, cell_idx, mask, ent_counter):
+    def coref_update(self, query_vector, cell_idx, mask):
         if self.entity_rep == 'learned_avg':
             alpha_wt = torch.sigmoid(
-                self.alpha(torch.cat([mem_vectors[cell_idx, :], query_vector], dim=0)))
-            avg_pool_vec = alpha_wt * mem_vectors[cell_idx, :] + (1 - alpha_wt) * query_vector
-            mem_vectors = mem_vectors * (1 - mask) + mask * torch.unsqueeze(avg_pool_vec, dim=0)
+                self.alpha(torch.cat([self.mem_vectors[cell_idx, :], query_vector], dim=0)))
+            avg_pool_vec = alpha_wt * self.mem_vectors[cell_idx, :] + (1 - alpha_wt) * query_vector
+            self.mem_vectors = self.mem_vectors * (1 - mask) + mask * torch.unsqueeze(avg_pool_vec, dim=0)
         else:
-            total_counts = torch.unsqueeze((ent_counter + 1).float(), dim=1)
-            pool_vec_num = mem_vectors * torch.unsqueeze(ent_counter, dim=1) + query_vector
+            total_counts = torch.unsqueeze((self.ent_counter + 1).float(), dim=1)
+            pool_vec_num = self.mem_vectors * torch.unsqueeze(self.ent_counter, dim=1) + query_vector
             avg_pool_vec = pool_vec_num / total_counts
-            mem_vectors = mem_vectors * (1 - mask) + mask * avg_pool_vec
+            self.mem_vectors = self.mem_vectors * (1 - mask) + mask * avg_pool_vec
 
-        return mem_vectors
 
