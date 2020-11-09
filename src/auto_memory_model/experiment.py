@@ -66,13 +66,6 @@ class Experiment:
 
         self.model = pick_controller(mem_type=mem_type, focus_group=focus_group, finetune=finetune, **kwargs)
 
-        # if mem_type == 'learned':
-        #     self.model = LearnedFixedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
-        # elif mem_type == 'lru':
-        #     self.model = LRUController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
-        # elif mem_type == 'unbounded':
-        #     self.model = UnboundedMemController(focus_group=focus_group, finetune=finetune, **kwargs).cuda()
-
         self.max_epochs = max_epochs
         self.train_info, self.optimizer, self.optim_scheduler, self.optimizer_params = {}, {}, {}, {}
 

@@ -63,7 +63,7 @@ def main():
                         help='MLP size used in the model')
     parser.add_argument('-use_srl', default=None, choices=['joint', 'event'], type=str,
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
-    parser.add_argument('-use_ment_type', default=False, action="store_true",
+    parser.add_argument('-no_use_ment_type', default=True, dest="use_ment_type", action="store_false",
                         help="If true, mentions are only merged with clusters of the same mention type.")
     parser.add_argument('-entity_rep', default='wt_avg', type=str,
                         choices=['learned_avg', 'wt_avg'], help='Entity representation.')
@@ -76,10 +76,10 @@ def main():
     parser.add_argument('-over_loss_wt', help='Weight of overwrite loss',
                         default=1.0, type=float)
     parser.add_argument('-sample_invalid', help='Sample invalids during training',
-                        default=1.0, type=float)
+                        default=0.2, type=float)
     parser.add_argument('-num_train_docs', default=None, type=int,
                         help='Number of training docs.')
-    parser.add_argument('-max_training_segments', default=None, type=int,
+    parser.add_argument('-max_training_segments', default=3, type=int,
                         help='Max. number of BERT segments in a document.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
@@ -93,8 +93,8 @@ def main():
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Fine-tuning learning rate",
                         default=5e-5, type=float)
-    parser.add_argument('-finetune', help="Fine-tuning document encoder",
-                        default=False, action="store_true")
+    parser.add_argument('-no_finetune', default=True, dest="finetune",
+                        action="store_false", help="Fine-tuning document encoder")
     parser.add_argument('-no_singletons', help="No singletons.",
                         default=False, action="store_true")
     parser.add_argument('-eval', help="Evaluate model",
