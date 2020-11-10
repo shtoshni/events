@@ -307,26 +307,29 @@ class Experiment:
                 logging.info(f"Ground Truth Actions:  {gt_class_counter}")
                 logging.info(f"Predicted Actions: {pred_class_counter}")
 
-                result_dict = {}
+                result_dict = OrderedDict()
                 # Print individual metrics
                 for focus_group in evaluator_dict:
                     indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
                     perf_str = ""
-                    result_dict[focus_group] = {}
+                    result_dict[focus_group] = OrderedDict()
                     for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator_dict[focus_group].evaluators):
                         metric_num = indv_evaluator.get_f1() * 100
                         perf_str += ", " + indv_metric + ": {:.1f}".format(metric_num)
-                        result_dict[focus_group][indv_metric] = metric_num
+                        result_dict[focus_group][indv_metric] = OrderedDict()
+                        result_dict[focus_group][indv_metric]['recall'] = round(indv_evaluator.get_recall() * 100, 1)
+                        result_dict[focus_group][indv_metric]['precision'] = round(
+                            indv_evaluator.get_precision() * 100, 1)
+                        result_dict[focus_group][indv_metric]['fscore'] = round(indv_evaluator.get_f1() * 100, 1)
 
-                    prec, rec, fscore = evaluator_dict[focus_group].get_prf()
-                    fscore = fscore * 100
+                    fscore = round(evaluator_dict[focus_group].get_f1() * 100, 1)
                     result_dict[focus_group]['fscore'] = fscore
                     if self.focus_group == focus_group:
                         result_dict['fscore'] = fscore
                     logging.info(focus_group.capitalize())
                     if split != 'test':
                         logging.info("F-score: %.1f %s" % (fscore, perf_str))
-                        logging.info("Oracle F-score: %.1f\n" % (oracle_evaluator_dict[focus_group].get_prf()[2] * 100))
+                        logging.info("Oracle F-score: %.1f\n" % (oracle_evaluator_dict[focus_group].get_f1() * 100))
 
                 # logging.info("Action accuracy: %.3f" % (corr_actions/total_actions))
                 logging.info(log_file)
@@ -357,7 +360,7 @@ class Experiment:
             logging.info('%s' % split.capitalize())
             result_dict = self.eval_model(split)
             if split != 'test':
-                logging.info('Calculated F1: %.3f' % result_dict['fscore'])
+                logging.info('Calculated F1: %.1f' % result_dict['fscore'])
 
             output_dict[split] = result_dict
 

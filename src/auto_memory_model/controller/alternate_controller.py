@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from auto_memory_model.memory.alternate_memory import UnboundedMemory
+from auto_memory_model.memory.alternate_memory import AlternateMemory
+from auto_memory_model.memory.alternate_mem_prob_vecs import AlternateProbMemory
 from auto_memory_model.controller.base_controller import BaseController
 from coref_utils.utils import get_mention_to_cluster_idx
 from pytorch_utils.label_smoothing import LabelSmoothingLoss
@@ -19,7 +20,7 @@ class AlternateMemController(BaseController):
         self.new_ent_wt = new_ent_wt
         self.over_loss_wt = over_loss_wt
 
-        self.memory_net = UnboundedMemory(
+        self.memory_net = AlternateMemory(
             hsize=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
             drop_module=self.drop_module, **kwargs)
 

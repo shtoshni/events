@@ -4,16 +4,19 @@ from pytorch_utils.modules import MLP
 from red_utils.constants import ELEM_TYPE_TO_IDX
 
 
-class UnboundedMemory(BaseMemory):
+class AlternateProbMemory(BaseMemory):
     def __init__(self, **kwargs):
-        super(UnboundedMemory, self).__init__(**kwargs)
-        self.srl_coref_mlp = MLP(3 * self.mem_size, self.mlp_size, 1,
-                           num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
+        super(AlternateProbMemory, self).__init__(**kwargs)
+        # self.srl_coref_mlp = MLP(3 * self.mem_size, self.mlp_size, 1,
+        #                    num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
         self.srl_role_mlp = MLP(3 * self.mem_size, self.mlp_size, 1,
                              num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
 
+        self.mem_coref_mlp = MLP(3 * self.mem_size + self.num_feats * self.emb_size, self.mlp_size, 1,
+                                 num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
+
         self.mem_vectors = torch.zeros(1, self.mem_size).cuda()
-        self.srl_mem = torch.zeros(1, self.mem_size).cuda()
+        self.srl_mem = None
         self.ent_counter = torch.tensor([0.0]).cuda()
         self.last_mention_idx = torch.zeros(1).long().cuda()
         self.cluster_type = torch.tensor([-1]).cuda()
@@ -21,7 +24,7 @@ class UnboundedMemory(BaseMemory):
     def initialize_memory(self):
         """Initialize the memory to null with only 1 memory cell to begin with."""
         self.mem_vectors = torch.zeros(1, self.mem_size).cuda()
-        self.srl_mem = torch.zeros(1, self.mem_size).cuda()
+        self.srl_mem = None
         self.ent_counter = torch.tensor([0.0]).cuda()
         self.last_mention_idx = torch.zeros(1).long().cuda()
         self.cluster_type = torch.tensor([-1]).cuda()
@@ -45,11 +48,10 @@ class UnboundedMemory(BaseMemory):
             indices = torch.squeeze(torch.nonzero(coref_mask, as_tuple=False), dim=-1)
             rel_mems = self.mem_vectors[indices]
 
-            num_cells = rel_mems.shape[0]
-            rep_query_vector = query_vector.repeat(num_cells, 1)  # M x H
-
+            rep_query_vector = query_vector.repeat(rel_mems.shape[0], 1)  # M x H
             pair_vec = torch.cat([rel_mems, rep_query_vector, rel_mems * rep_query_vector,
                                   feature_embs[indices]], dim=-1)
+            # pair_vec = torch.cat([rel_mems, rep_query_vector, rel_mems * rep_query_vector], dim=-1)
             pair_score = torch.squeeze(self.mem_coref_mlp(pair_vec), dim=-1)
             non_zero_coref_score = pair_score + ment_score  # M
 
@@ -57,26 +59,31 @@ class UnboundedMemory(BaseMemory):
             #     coref_score[indices[idx]] = non_zero_coref_score[idx]
             coref_score[indices] = non_zero_coref_score
 
-        srl_vec = torch.zeros_like(query_vector)
+        # srl_vec = torch.zeros_like(query_vector)
+        srl_prob = None
         if ment_type == ELEM_TYPE_TO_IDX['EVENT']:
-            # SRL vec
-            srl_vec, use_srl_mask = self.get_srl_role_vec(query_vector, ment_type)
-            if use_srl_mask:
-                # SRL vec is meaningful
-                num_cells = self.mem_vectors.shape[0]
-                rep_srl_vec = srl_vec.repeat(num_cells, 1)
+            arg_vec, use_srl_mask, srl_prob = self.get_srl_role_vec(query_vector, ment_type)
 
-                # Perform coreference between SRL memory and SRL vec
-                srl_pair_vec = torch.cat([self.srl_mem, rep_srl_vec, self.srl_mem * rep_srl_vec], dim=-1)
-                srl_mask = self.get_coref_mask(ment_type)
-                srl_score = torch.squeeze(self.srl_coref_mlp(srl_pair_vec), dim=-1) * srl_mask
-                coref_score += srl_score
+            if use_srl_mask:  # There are entities
+                if use_coref_mask:  # There are events already in the cluster
+                    indices = torch.squeeze(torch.nonzero(coref_mask, as_tuple=False), dim=-1)
+                    coref_score[indices] += torch.sum(self.srl_mem * srl_prob, dim=-1)
+            #         indices = torch.squeeze(torch.nonzero(coref_mask, as_tuple=False), dim=-1)
+            #         rel_mems = self.srl_mem[indices]  # Relevant memory
+            #
+            #         rep_arg_vec = arg_vec.repeat(rel_mems.shape[0], 1)
+            #
+            #         # Perform coreference between SRL memory and SRL vec
+            #         srl_pair_vec = torch.cat([rel_mems, rep_srl_vec, rel_mems * rep_srl_vec,
+            #                                   torch.zeros(rel_mems.shape[0], self.num_feats * self.emb_size).cuda()], dim=-1)
+            #         arg_match_score = torch.squeeze(self.mem_coref_mlp(srl_pair_vec), dim=-1)
+            #         coref_score += arg_match_score
 
         coref_new_mask = torch.cat([self.get_coref_mask(ment_type), torch.tensor([1.0]).cuda()], dim=0)
         coref_new_scores = torch.cat(([coref_score, torch.tensor([0.0]).cuda()]), dim=0)
 
         coref_new_not_scores = coref_new_scores * coref_new_mask + (1 - coref_new_mask) * (-1e4)
-        return coref_new_not_scores, srl_vec
+        return coref_new_not_scores, srl_prob
 
     def get_srl_role_vec(self, query_vector, ment_type):
         # Repeat the query vector for comparison against all cells
@@ -104,9 +111,9 @@ class UnboundedMemory(BaseMemory):
 
             # Weighted-avg SRL vector - remove the last term which corresponds to NULL vector
             srl_vec = torch.mv(torch.transpose(ent_vecs, 1, 0), srl_prob[:-1])
-            return srl_vec, use_srl_mask
+            return srl_vec, use_srl_mask, srl_prob[:-1]
         else:
-            return torch.zeros_like(query_vector), use_srl_mask
+            return torch.zeros_like(query_vector), use_srl_mask, None
 
     def predict_action(self, query_vector, ment_type, ment_score, feature_embs):
         coref_new_scores, srl_vec = self.get_coref_new_scores(query_vector, ment_type, ment_score, feature_embs)
@@ -150,6 +157,9 @@ class UnboundedMemory(BaseMemory):
         first_overwrite = True
         last_action_str = '<s>'
 
+        cell_idx_to_event_idx = {}
+        event_counter = 0
+
         follow_gt = self.training or teacher_forcing
 
         for ment_idx, (ment_emb,  (span_start, span_end, ment_type), ment_score, (gt_cell_idx, gt_action_str)) in \
@@ -175,7 +185,6 @@ class UnboundedMemory(BaseMemory):
                 pred_cell_idx, pred_action_str = self.interpret_scores(
                     coref_new_scores, overwrite_ign_scores, first_overwrite)
                 action_logit_list.append((coref_new_scores, overwrite_ign_scores))
-
                 action_list.append((pred_cell_idx, pred_action_str))
             else:
                 continue
@@ -216,13 +225,26 @@ class UnboundedMemory(BaseMemory):
 
                     if ment_type == ELEM_TYPE_TO_IDX['EVENT']:
                         # Update SRL memory
-                        updated_vec = self.get_srl_role_vec(self.mem_vectors[cell_idx], ment_type)[0]
-                        self.srl_mem = self.srl_mem * (1 - mask) + mask * torch.unsqueeze(updated_vec, dim=0)
+                        event_idx = cell_idx_to_event_idx[cell_idx]
+                        updated_vec = self.get_srl_role_vec(self.mem_vectors[cell_idx], ment_type)[2]
+
+                        if updated_vec is not None:
+                            event_mask = (torch.arange(0, event_counter) == event_idx).float().cuda()
+                            event_mask = torch.unsqueeze(event_mask, dim=1)
+                            event_mask = event_mask.repeat(1, self.srl_mem.shape[1])
+                            self.srl_mem = self.srl_mem * (1 - event_mask) + event_mask * torch.unsqueeze(updated_vec, dim=0)
 
                 elif action_str == 'o':
                     # Append the new vector
                     self.mem_vectors = torch.cat([self.mem_vectors, torch.unsqueeze(query_vector, dim=0)], dim=0)
-                    self.srl_mem = torch.cat([self.srl_mem, torch.unsqueeze(srl_vec, dim=0)], dim=0)
+                    if ment_type == ELEM_TYPE_TO_IDX['EVENT'] and srl_vec is not None:
+                        if self.srl_mem is None:
+                            self.srl_mem = torch.unsqueeze(srl_vec, dim=0)
+                        else:
+                            self.srl_mem = torch.cat([self.srl_mem, torch.unsqueeze(srl_vec, dim=0)], dim=0)
+                        cell_idx_to_event_idx[cell_idx] = event_counter
+                        event_counter += 1
+
                     self.ent_counter = torch.cat([self.ent_counter, torch.tensor([1.0]).cuda()], dim=0)
                     self.last_mention_idx = torch.cat([self.last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
                     self.cluster_type = torch.cat([self.cluster_type, torch.tensor([ment_type]).cuda()], dim=0)
