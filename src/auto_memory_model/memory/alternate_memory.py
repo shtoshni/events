@@ -4,9 +4,9 @@ from pytorch_utils.modules import MLP
 from red_utils.constants import ELEM_TYPE_TO_IDX
 
 
-class UnboundedMemory(BaseMemory):
+class AlternateMemory(BaseMemory):
     def __init__(self, **kwargs):
-        super(UnboundedMemory, self).__init__(**kwargs)
+        super(AlternateMemory, self).__init__(**kwargs)
         self.srl_coref_mlp = MLP(3 * self.mem_size, self.mlp_size, 1,
                            num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
         self.srl_role_mlp = MLP(3 * self.mem_size, self.mlp_size, 1,

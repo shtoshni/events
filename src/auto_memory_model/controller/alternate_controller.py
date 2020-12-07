@@ -14,7 +14,7 @@ class AlternateMemController(BaseController):
         super(AlternateMemController, self).__init__(**kwargs)
 
         # Mention orderding is fixed for alternate mem controller - first cluster entities, then events
-        self.ment_ordering = 'ment_type'
+        # self.ment_ordering = 'ment_type'
         kwargs['use_ment_type'] = True
 
         self.new_ent_wt = new_ent_wt
