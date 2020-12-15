@@ -1,11 +1,13 @@
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from kbp_2015_utils.constants import REALIS_VALS_TO_IDX, EVENT_TYPES_TO_IDX, EVENT_SUBTYPES_TO_IDX
+from kbp_2015_utils.constants import REALIS_VALS_TO_IDX, EVENT_TYPES_TO_IDX, EVENT_SUBTYPES_TO_IDX, DOC_TYPES_TO_IDX
 
 
 def parse_ann_file(ann_file):
     tree = ET.parse(ann_file)
     xml_root = tree.getroot()
+
+    doc_type = DOC_TYPES_TO_IDX[xml_root.attrib['source_type']]
 
     mention_list = []
     clusters = []
@@ -53,4 +55,4 @@ def parse_ann_file(ann_file):
         if cur_cluster:
             clusters.append(cur_cluster)
 
-    return mention_list, clusters
+    return doc_type, mention_list, clusters

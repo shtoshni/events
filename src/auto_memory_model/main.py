@@ -24,29 +24,21 @@ def main():
                         default='/home/shtoshni/Research/events/models',
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
-        '-dataset', default='red', choices=['red'], type=str)
+        '-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
-    parser.add_argument('-doc_enc', default='independent', type=str,
-                        choices=['independent', 'overlap'], help='BERT model type')
-    parser.add_argument('-proc_strategy', default='duplicate', type=str,
-                        choices=['default', 'duplicate'],
-                        help='Document processing strategy. In duplicate we add [DUPLICATE] tags to document.')
     parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/litbank_coref/resources", type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
 
     # Mention variables
-    parser.add_argument('-max_span_width', default=10, type=int,
+    parser.add_argument('-max_span_width', default=6, type=int,
                         help='Max span width.')
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
-    parser.add_argument('-focus_group', default='joint', choices=['joint', 'entity', 'event'], type=str,
-                        help='Mentions in focus. If both, the cluster all mentions, otherwise cluster particular type'
-                             ' of mentions.')
-    parser.add_argument('-ment_ordering', default='ment_type', type=str,
+    parser.add_argument('-ment_ordering', default='document', type=str,
                         choices=['ment_type', 'document'],
                         help='Order in which detected mentions are clustered. If ment_type, entity mentions are'
                         'clustered before event mentions, otherwise mentions are ordered by their location in doc.')
@@ -107,12 +99,12 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len', 'doc_enc', 'proc_strategy',  # Document + Encoder params
-                'ment_emb', 'ment_ordering', 'focus_group',  # Mention params
+    imp_opts = ['model_size', 'max_segment_len',
+                'ment_emb', 'ment_ordering',
                 'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
                 'use_srl',  'use_ment_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
-                'dataset', 'num_train_docs', 'sample_invalid', 'max_training_segments',
+                'num_train_docs', 'sample_invalid', 'max_training_segments',
                 'over_loss_wt',  "new_ent_wt",  # Training params
                 ]
     for key, val in vars(args).items():
@@ -132,9 +124,7 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    # doc_enc = args.doc_enc + ('_truecase' if args.all_truecase else '')
-    doc_enc = args.doc_enc + (f'_{args.proc_strategy}' if (args.proc_strategy != 'default') else '')
-    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{doc_enc}')
+    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}')
     print(args.data_dir)
 
     # Get mention model name

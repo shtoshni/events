@@ -19,8 +19,9 @@ NEWLINE_TOKEN = "[NEWL]"
 
 
 class DocumentState(object):
-    def __init__(self, key):
+    def __init__(self, key, doc_type):
         self.doc_key = key
+        self.doc_type = doc_type
         self.sentence_end = []
         self.token_end = []
         self.tokens = []
@@ -52,6 +53,7 @@ class DocumentState(object):
         assert num_words == len(sentence_map), (num_words, len(sentence_map))
         return {
             "doc_key": self.doc_key,
+            "doc_type": self.doc_type,
             "sentences": self.segments,
             "clusters": self.clusters,
             'sentence_map': sentence_map,
@@ -96,8 +98,8 @@ def get_sentence_map(segments, sentence_end):
     return sent_map
 
 
-def get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, segment_len):
-    document_state = DocumentState(doc_name)
+def get_document(doc_name, doc_type, tokenized_doc, clusters, ent_id_to_info, segment_len):
+    document_state = DocumentState(doc_name, doc_type)
     word_idx = -1
     for idx, token in enumerate(tokenized_doc):
         if token == NEWLINE_TOKEN:
@@ -162,7 +164,7 @@ def tokenize_doc(doc_name, source_file, ann_file, tokenizer):
     # altered_doc_str = doc_str.replace("\n", "[NEWL]")
 
     # Parse the XML
-    mention_list, clusters = parse_ann_file(ann_file)
+    doc_type, mention_list, clusters = parse_ann_file(ann_file)
     # Sort mentions by their starting and ending point - Priority to starting point
     mention_list = sorted(mention_list, key=lambda x: x[0] + 1e-5 * x[1])
 
@@ -244,7 +246,7 @@ def tokenize_doc(doc_name, source_file, ann_file, tokenizer):
     token_counter += len(rem_tokens) - newline_count
 
     tokenized_doc.extend(rem_tokens)
-    return tokenized_doc, ent_id_to_info, clusters
+    return doc_type, tokenized_doc, ent_id_to_info, clusters
 
 
 def minimize_partition(args, split, tokenizer, seg_len):
@@ -266,9 +268,9 @@ def minimize_partition(args, split, tokenizer, seg_len):
     with open(output_path, "w") as output_file:
         for doc_name, source_file, annotation_file in \
                 zip(doc_ids, source_files, ann_files):
-            tokenized_doc, ent_id_to_info, clusters = tokenize_doc(
+            doc_type, tokenized_doc, ent_id_to_info, clusters = tokenize_doc(
                 doc_name, source_file, annotation_file, tokenizer)
-            document = get_document(doc_name, tokenized_doc, clusters, ent_id_to_info, seg_len)
+            document = get_document(doc_name, doc_type, tokenized_doc, clusters, ent_id_to_info, seg_len)
             output_file.write(json.dumps(document))
             output_file.write("\n")
             count += 1
