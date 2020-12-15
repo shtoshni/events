@@ -12,7 +12,6 @@ import pytorch_utils.utils as utils
 from mention_model.controller import Controller
 from torch.utils.tensorboard import SummaryWriter
 from red_utils.utils import load_data
-from red_utils.constants import IDX_TO_ELEM_TYPE
 
 EPS = 1e-8
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
@@ -41,6 +40,7 @@ class Experiment:
             self.train_examples = self.train_examples[:num_train_docs]
         self.data_iter_map = {"train": self.train_examples,
                               "valid": self.dev_examples,
+                              # "valid": self.train_examples,
                               "test": self.test_examples}
         self.max_epochs = max_epochs
 
@@ -169,7 +169,7 @@ class Experiment:
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
-            logging.info("Epoch: %d, Time: %.2f, Macro F-score: %.3f, Max F-score: %.3f"
+            logging.info("Epoch: %d, Time: %.2f, F-score: %.1f, Max F-score: %.1f"
                          % (epoch + 1, elapsed_time, fscore, self.train_info['val_perf']))
 
             sys.stdout.flush()
@@ -191,72 +191,59 @@ class Experiment:
         dev_examples = self.data_iter_map[split]
 
         with torch.no_grad():
-            total_recall = defaultdict(float)
-            total_gold = defaultdict(float)
+            # total_gold = defaultdict(float)
+            total_gold = 0.0
+            all_golds = 0.0
             # Output file to write the outputs
             agg_results = {}
-
-            if threshold is None:
-                threshold = {}
             for dev_example in dev_examples:
-                preds, y, cand_starts, cand_ends, recall_dict = model(dev_example, final_eval=final_eval)
+                preds, y = model(dev_example)
 
-                for ment_idx, ment_type in enumerate(IDX_TO_ELEM_TYPE[:2]):
-                    total_gold[ment_type] += torch.sum(y[ment_type]).item()
-                    total_recall[ment_type] += recall_dict[ment_type]
-                    agg_results[ment_type] = {}
+                all_golds += sum([len(cluster) for cluster in dev_example["clusters"]])
+                total_gold += torch.sum(y).item()
 
-                    if threshold:
+                if threshold:
+                    corr, total_preds, total_y = self.eval_preds(
+                        preds, y, threshold=threshold)
+                    if threshold not in agg_results:
+                        agg_results[threshold] = defaultdict(float)
+
+                    agg_results[threshold]['corr'] += corr
+                    agg_results[threshold]['total_preds'] += total_preds
+
+                else:
+                    threshold_range = np.arange(0.0, 0.5, 0.01)
+                    for cur_threshold in threshold_range:
                         corr, total_preds, total_y = self.eval_preds(
-                            preds[ment_type], y[ment_type], threshold=threshold[ment_type])
-                        if threshold[ment_type] not in agg_results:
-                            agg_results[ment_type][threshold[ment_type]] = defaultdict(float)
+                            preds, y, threshold=cur_threshold)
+                        if cur_threshold not in agg_results:
+                            agg_results[cur_threshold] = defaultdict(float)
 
-                        x = agg_results[ment_type][threshold[ment_type]]
-                        x['corr'] += corr
-                        x['total_preds'] += total_preds
-                        x['total_y'] += total_y
-                        prec = x['corr']/(x['total_preds'] + EPS)
-                        recall = x['corr']/x['total_y']
-                        x['fscore'] = 2 * prec * recall/(prec + recall + EPS)
-                    else:
-                        threshold_range = np.arange(0.0, 0.5, 0.01)
-                        for cur_threshold in threshold_range:
-                            corr, total_preds, total_y = self.eval_preds(
-                                preds[ment_type], y[ment_type], threshold=cur_threshold)
-                            if cur_threshold not in agg_results:
-                                agg_results[ment_type][cur_threshold] = defaultdict(float)
+                        agg_results[cur_threshold]['corr'] += corr
+                        agg_results[cur_threshold]['total_preds'] += total_preds
 
-                            x = agg_results[ment_type][cur_threshold]
-                            x['corr'] += corr
-                            x['total_preds'] += total_preds
-                            x['total_y'] += total_y
-                            prec = x['corr']/x['total_preds']
-                            recall = x['corr']/x['total_y']
-                            x['fscore'] = 2 * prec * recall/(prec + recall + EPS)
+        if threshold:
+            prec = agg_results[threshold]['corr']/(agg_results[threshold]['total_preds'] + EPS)
+            recall = agg_results[threshold]['corr']/all_golds
+            max_fscore = 2 * prec * recall/(prec + recall + EPS)
+        else:
+            max_fscore, threshold = 0, 0.0
+            for cur_threshold in agg_results:
+                prec = agg_results[cur_threshold]['corr'] / (agg_results[cur_threshold]['total_preds'] + EPS)
+                recall = agg_results[cur_threshold]['corr'] / all_golds
+                fscore = 2 * prec * recall / (prec + recall + EPS)
+                if fscore > max_fscore:
+                    max_fscore = fscore
+                    threshold = cur_threshold
 
-            max_fscore = {}
-            if threshold:
-                for ment_type in agg_results:
-                    max_fscore[ment_type] = agg_results[ment_type][threshold[ment_type]]['fscore']
-            else:
-                threshold = {}
-                for ment_type in agg_results:
-                    max_fscore[ment_type], threshold[ment_type] = 0, 0.0
-                    for key in agg_results[ment_type]:
-                        if agg_results[ment_type][key]['fscore'] > max_fscore[ment_type]:
-                            max_fscore[ment_type] = agg_results[ment_type][key]['fscore']
-                            threshold[ment_type] = key
-
-            logging.info(f"Max F-score: {max_fscore}, Threshold: {threshold}")
-
-        print(total_recall, total_gold)
-        overall_recall = (sum(total_recall.values())/sum(total_gold.values()))
-        logging.info("Recall: %.3f" % overall_recall)
-        macro_fscore = sum([fscore for fscore in max_fscore.values()])/len(max_fscore)
-        logging.info("Macro F-score: %.3f" % macro_fscore)
-
-        return macro_fscore, threshold
+        max_fscore = 100 * max_fscore  # F-score in percentage
+        try:
+            assert (all_golds == total_gold)
+        except AssertionError:
+            logging.info(f"Number of true mentions {all_golds} different from mentions "
+                         f"filtered through {total_gold}")
+        logging.info("Max F-score: %.1f, Threshold: %.2f" % (max_fscore, threshold))
+        return max_fscore, threshold
 
     def final_eval(self):
         """Evaluate the model on train, dev, and test"""
@@ -270,17 +257,16 @@ class Experiment:
         perf_file = path.join(self.model_dir, "perf.txt")
         with open(perf_file, 'w') as f:
             # for split in ['Train', 'Valid']:
-            for split in ['Valid']:
+            for split in ['Valid', 'Test']:
                 logging.info('\n')
                 logging.info('%s' % split)
                 split_f1, _ = self.eval_model(
                     split.lower(), threshold=threshold, final_eval=True)
-                logging.info('Calculated Recall: %.3f' % split_f1)
+                logging.info('Calculated F-score: %.1f' % split_f1)
 
-                f.write("%s\t%.4f\n" % (split, split_f1))
+                f.write("%s\t%.1f\n" % (split, split_f1))
                 if not self.slurm_id:
-                    self.writer.add_scalar(
-                        "Recall/{}".format(split), split_f1)
+                    self.writer.add_scalar("F-score/{}".format(split), split_f1)
             logging.info("Final performance summary at %s" % perf_file)
 
         sys.stdout.flush()

@@ -9,7 +9,7 @@ from cleantext import clean
 
 from os import path
 from transformers import BertTokenizer
-from data_processing.utils import get_ent_info, get_clusters_from_xml
+from data_processing.red.utils import get_ent_info, get_clusters_from_xml
 import argparse
 from red_utils.constants import ELEM_TYPE_TO_IDX, DUPLICATE_START_TAG, DUPLICATE_END_TAG
 
@@ -345,15 +345,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir", type=str, help="Input directory root")
     parser.add_argument("output_dir", type=str, help="Output directory")
-    parser.add_argument("-use_truecase", default=True, action="store_true",
+    parser.add_argument("-use_truecase", default=False, action="store_true",
                         help="Pass all documents through truecase.")
-    parser.add_argument("-add_duplicate_tag", default=False, action="store_true",
-                        help="Add duplicate tag to indicate duplicated text.")
 
     parsed_args = parser.parse_args()
 
     parsed_args.source_dir = path.join(parsed_args.input_dir, "data/source")
-    parsed_args.ann_dir = path.join(parsed_args.input_dir, "data/mod_annotation")
+    parsed_args.ann_dir = path.join(parsed_args.input_dir, "data/hopper")
     parsed_args.doc_dir = path.join(parsed_args.input_dir, "docs")
 
     if not os.path.isdir(parsed_args.output_dir):

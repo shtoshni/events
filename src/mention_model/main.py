@@ -24,16 +24,10 @@ def main():
                         default='/home/shtoshni/Research/events/models',
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
-        '-dataset', default='red', choices=['red'], type=str)
+        '-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
-    parser.add_argument('-doc_enc', default='independent', type=str,
-                        choices=['independent', 'overlap'],
-                        help='Document encoding strategy. Currently we only have independent for RED')
-    parser.add_argument('-proc_strategy', default='duplicate', type=str,
-                        choices=['default', 'duplicate'],
-                        help='Document processing strategy. In duplicate we add [DUPLICATE] tags to document.')
-    parser.add_argument('-pretrained_bert_dir', default='../../litbank_coref/resources/', type=str,
+    parser.add_argument('-pretrained_bert_dir', default='/home/shtoshni/Research/litbank_coref/resources/', type=str,
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
@@ -52,7 +46,7 @@ def main():
                         help='Number of training docs.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
-    parser.add_argument('-max_training_segments', default=3, type=int,
+    parser.add_argument('-max_training_segments', default=10, type=int,
                         help='Max. number of BERT segments in a document.')
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=20, type=int)
@@ -83,9 +77,7 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    doc_enc = args.doc_enc + (f'_{args.proc_strategy}' if args.proc_strategy != 'default' else '')
-    args.data_dir = path.join(args.base_data_dir,
-                              f'{args.dataset}/{doc_enc}')
+    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/')
     print(args.data_dir)
     # Log directory for Tensorflow Summary
     log_dir = path.join(model_dir, "logs")

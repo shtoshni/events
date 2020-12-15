@@ -55,7 +55,7 @@ class IndependentDocEncoder(BaseDocEncoder):
         sentences = example["sentences"]
         num_sentences = len(example["sentences"])
 
-        if num_sentences > self.max_training_segments:
+        if num_sentences > self.max_training_segments and self.max_training_segments is not None:
             sentence_offset = random.randint(0, num_sentences - self.max_training_segments)
             word_offset = sum([len(sent) for sent in sentences[:sentence_offset]])
             sentences = sentences[sentence_offset: sentence_offset + self.max_training_segments]

@@ -3,21 +3,18 @@ import torch.nn as nn
 
 from collections import Counter, OrderedDict
 from document_encoder.independent import IndependentDocEncoder
-from document_encoder.overlap import OverlapDocEncoder
 from pytorch_utils.modules import MLP
-from red_utils.constants import ELEM_TYPE_TO_IDX, IDX_TO_ELEM_TYPE, DOC_TYPE_TO_IDX
+from kbp_2015_utils.constants import EVENT_SUBTYPES, SPANS_TO_LEN_RATIO, EVENT_TYPES, REALIS_VALS
 from red_utils.utils import get_doc_type
-
-ELEM_TO_TOP_SPAN_RATIO = {'ENTITY': 0.3, 'EVENT': 0.2}
 
 
 class BaseController(nn.Module):
     def __init__(self,
                  dropout_rate=0.5, max_span_width=20,
-                 ment_emb='endpoint', doc_enc='independent', ment_ordering='ment_type',
+                 ment_emb='endpoint', ment_ordering='ment_type',
                  mlp_size=1000, emb_size=20,
                  sample_invalid=1.0, label_smoothing_wt=0.0,
-                 dataset='red',  focus_group='both',
+                 dataset='kbp_2015',  focus_group='both',
                  **kwargs):
         super(BaseController, self).__init__()
         self.dataset = dataset
@@ -27,10 +24,7 @@ class BaseController(nn.Module):
         self.sample_invalid = sample_invalid
         self.label_smoothing_wt = label_smoothing_wt
 
-        if doc_enc == 'independent':
-            self.doc_encoder = IndependentDocEncoder(**kwargs)
-        else:
-            self.doc_encoder = OverlapDocEncoder(**kwargs)
+        self.doc_encoder = IndependentDocEncoder(**kwargs)
 
         self.hsize = self.doc_encoder.hsize
         self.mlp_size = mlp_size
@@ -49,11 +43,14 @@ class BaseController(nn.Module):
         self.other.doc_type_emb = nn.Embedding(3, self.emb_size)
 
         self.other.mention_mlp = nn.ModuleDict()
-        for elem_type in IDX_TO_ELEM_TYPE:
-            self.other.mention_mlp[elem_type] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
-                hidden_size=self.mlp_size, output_size=1, num_hidden_layers=1,
+
+        for category, category_vals in zip(["event_subtype", "event_type", "realis"],
+                                           [EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS]):
+            self.other.mention_mlp[category] = MLP(
+                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + self.emb_size,
+                hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
                 bias=True, drop_module=self.drop_module)
+
         self.other.span_width_mlp = MLP(
             input_size=20, hidden_size=self.mlp_size,
             output_size=1, num_hidden_layers=1, bias=True,
@@ -69,7 +66,7 @@ class BaseController(nn.Module):
 
         return width_scores
 
-    def get_span_embeddings(self, encoded_doc, ment_starts, ment_ends, doc_type):
+    def get_span_embeddings(self, encoded_doc, ment_starts, ment_ends):
         span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
 
         # Add span width embeddings
@@ -77,11 +74,11 @@ class BaseController(nn.Module):
         span_width_embs = self.other.span_width_embeddings(span_width_indices)
         span_emb_list.append(span_width_embs)
 
-        doc_type_idx = DOC_TYPE_TO_IDX[doc_type]
-        doc_type_emb = self.other.doc_type_emb(torch.tensor(doc_type_idx).long().cuda())
-        doc_type_emb = torch.unsqueeze(doc_type_emb, dim=0)
-        doc_type_emb = doc_type_emb.repeat(span_width_embs.shape[0], 1)
-        span_emb_list.append(doc_type_emb)
+        # doc_type_idx = DOC_TYPE_TO_IDX[doc_type]
+        # doc_type_emb = self.other.doc_type_emb(torch.tensor(doc_type_idx).long().cuda())
+        # doc_type_emb = torch.unsqueeze(doc_type_emb, dim=0)
+        # doc_type_emb = doc_type_emb.repeat(span_width_embs.shape[0], 1)
+        # span_emb_list.append(doc_type_emb)
 
         if self.ment_emb == 'attn':
             num_words = encoded_doc.shape[0]  # T
@@ -99,19 +96,36 @@ class BaseController(nn.Module):
         span_embs = torch.cat(span_emb_list, dim=-1)
         return span_embs
 
-    def get_gold_mentions(self, clusters, num_words, flat_cand_mask, ment_type):
-        gold_ments = torch.zeros(num_words, self.max_span_width).cuda()
+    def get_gold_mentions(self, clusters, num_words, flat_cand_mask):
+        gold_ments_subtype = torch.zeros(num_words, self.max_span_width, len(EVENT_SUBTYPES)).cuda()
+        gold_ments_type = torch.zeros(num_words, self.max_span_width, len(EVENT_TYPES)).cuda()
+        gold_ments_realis = torch.zeros(num_words, self.max_span_width, len(REALIS_VALS)).cuda()
+
         for cluster in clusters:
             for mention in cluster:
-                span_start, span_end, span_type = mention
-                if span_type == ment_type:
-                    span_width = span_end - span_start + 1
-                    if span_width <= self.max_span_width:
-                        span_width_idx = span_width - 1
-                        gold_ments[span_start, span_width_idx] = 1
+                span_start, span_end, mention_info = mention
+                subtype_val = mention_info["subtype_val"]
+                type_val = mention_info["type_val"]
+                realis_val = mention_info["realis_val"]
 
-        filt_gold_ments = gold_ments.reshape(-1)[flat_cand_mask].float()
-        # assert(torch.sum(gold_ments) == torch.sum(filt_gold_ments))  # Filtering shouldn't remove gold mentions
+                span_width = span_end - span_start + 1
+                if span_width <= self.max_span_width:
+                    span_width_idx = span_width - 1
+                    gold_ments_subtype[span_start, span_width_idx, subtype_val] = 1
+                    gold_ments_type[span_start, span_width_idx, type_val] = 1
+                    gold_ments_realis[span_start, span_width_idx, realis_val] = 1
+
+        filt_gold_ments = {}
+        filt_gold_ments["event_subtype"] = gold_ments_subtype.reshape(-1, len(EVENT_SUBTYPES))[flat_cand_mask].float()
+        filt_gold_ments["event_type"] = gold_ments_type.reshape(-1, len(EVENT_TYPES))[flat_cand_mask].float()
+        filt_gold_ments["realis"] = gold_ments_realis.reshape(-1, len(REALIS_VALS))[flat_cand_mask].float()
+
+        # Filtering shouldn't remove gold mentions
+        try:
+            assert(torch.sum(gold_ments_subtype) == torch.sum(filt_gold_ments["event_subtype"]))
+        except AssertionError:
+            print(torch.sum(gold_ments_subtype), torch.sum(filt_gold_ments["event_subtype"]))
+
         return filt_gold_ments
 
     def get_candidate_endpoints(self, encoded_doc, example):
@@ -129,9 +143,12 @@ class BaseController(nn.Module):
 
         # End before document ends & Same sentence
         constraint1 = (cand_ends < num_words)
-        # Removing this constraint because RED doesn't have sentence segmentation
-        constraint2 = (cand_start_sent_indices == cand_end_sent_indices)
-        cand_mask = constraint1 & constraint2
+        # Removing this constraint because sentence boundaries based on simple heuristics such as "\n"
+        # don't work for KBP
+        # constraint2 = (cand_start_sent_indices == cand_end_sent_indices)
+        # cand_mask = constraint1 & constraint2
+
+        cand_mask = constraint1
         flat_cand_mask = cand_mask.reshape(-1)
 
         # Filter and flatten the candidate end points
@@ -147,22 +164,17 @@ class BaseController(nn.Module):
         span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends, get_doc_type(example))
         ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends)
 
-        if self.focus_group == 'joint':
-            elem_types = IDX_TO_ELEM_TYPE
-        else:
-            elem_types = [self.focus_group.upper()]
-
         all_topk_starts = None
         all_topk_ends = None
         all_topk_scores = None
         all_ment_type = None
 
-        for ment_type in elem_types:
-            ment_idx = ELEM_TYPE_TO_IDX[ment_type]
+        for ment_idx, ment_type in enumerate(EVENT_SUBTYPES):
+            print(ment_type)
             mention_logits = torch.squeeze(self.other.mention_mlp[ment_type](span_embs), dim=-1)
             mention_logits += ment_width_scores
 
-            k = int(ELEM_TO_TOP_SPAN_RATIO[ment_type] * num_words)
+            k = int(SPANS_TO_LEN_RATIO * num_words)
             topk_indices = torch.topk(mention_logits, k)[1]
 
             topk_indices_mask = torch.zeros_like(mention_logits).cuda()
