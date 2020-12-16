@@ -4,8 +4,9 @@ import torch.nn as nn
 from collections import Counter, OrderedDict
 from document_encoder.independent import IndependentDocEncoder
 from pytorch_utils.modules import MLP
-from kbp_2015_utils.constants import EVENT_SUBTYPES, SPANS_TO_LEN_RATIO, EVENT_TYPES, REALIS_VALS
-from red_utils.utils import get_doc_type
+from kbp_2015_utils.constants import EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS
+from auto_memory_model.constants import SPANS_TO_LEN_RATIO
+from data_utils.utils import get_clusters
 
 
 class BaseController(nn.Module):
@@ -143,7 +144,6 @@ class BaseController(nn.Module):
         # don't work for KBP
         # constraint2 = (cand_start_sent_indices == cand_end_sent_indices)
         # cand_mask = constraint1 & constraint2
-
         cand_mask = constraint1
         flat_cand_mask = cand_mask.reshape(-1)
 
@@ -152,71 +152,61 @@ class BaseController(nn.Module):
         filt_cand_ends = cand_ends.reshape(-1)[flat_cand_mask]  # (num_candidates,)
         return filt_cand_starts, filt_cand_ends, flat_cand_mask
 
-    def get_pred_mentions(self, example, encoded_doc):
+    def get_pred_mentions(self, example, encoded_doc, category="event_subtype"):
         num_words = encoded_doc.shape[0]
 
         filt_cand_starts, filt_cand_ends, flat_cand_mask = self.get_candidate_endpoints(encoded_doc, example)
 
-        span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends, get_doc_type(example))
+        span_embs = self.get_span_embeddings(example["doc_type"], encoded_doc, filt_cand_starts, filt_cand_ends)
         ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends)
 
-        all_topk_starts = None
-        all_topk_ends = None
-        all_topk_scores = None
-        all_ment_type = None
+        mention_logits = torch.squeeze(self.other.mention_mlp[category](span_embs), dim=-1)
+        mention_logits += torch.unsqueeze(ment_width_scores, dim=-1)
 
-        for ment_idx, ment_type in enumerate(EVENT_SUBTYPES):
-            print(ment_type)
-            mention_logits = torch.squeeze(self.other.mention_mlp[ment_type](span_embs), dim=-1)
-            mention_logits += ment_width_scores
+        k = int(SPANS_TO_LEN_RATIO[self.dataset] * num_words)
+        num_ment_type = mention_logits.shape[1]  # Number of event subtypes
+        mention_logits = mention_logits.reshape(-1)
+        reshaped_topk_indices = torch.topk(mention_logits, k)[1]
 
-            k = int(SPANS_TO_LEN_RATIO * num_words)
-            topk_indices = torch.topk(mention_logits, k)[1]
+        topk_indices = reshaped_topk_indices // num_ment_type
+        topk_ment_type = reshaped_topk_indices % num_ment_type
 
-            topk_indices_mask = torch.zeros_like(mention_logits).cuda()
-            topk_indices_mask[topk_indices] = 1
+        topk_indices_mask = torch.zeros_like(mention_logits).cuda()
+        topk_indices_mask[topk_indices] = 1
 
-            topk_starts = filt_cand_starts[topk_indices]
-            topk_ends = filt_cand_ends[topk_indices]
-            topk_scores = mention_logits[topk_indices]
+        topk_starts = filt_cand_starts[topk_indices]
+        topk_ends = filt_cand_ends[topk_indices]
+        topk_scores = mention_logits[reshaped_topk_indices]
 
-            # Sort the mentions by (start) and tiebreak with (end)
-            sort_scores = topk_starts + 1e-5 * topk_ends
-            _, sorted_indices = torch.sort(sort_scores, dim=0)
-
-            if all_topk_starts is None:
-                all_topk_starts = topk_starts[sorted_indices]
-                all_topk_ends = topk_ends[sorted_indices]
-                all_topk_scores = topk_scores[sorted_indices]
-                all_ment_type = torch.tensor([ment_idx] * sorted_indices.shape[0]).cuda()
-            else:
-                all_topk_starts = torch.cat([all_topk_starts, topk_starts[sorted_indices]], dim=0)
-                all_topk_ends = torch.cat([all_topk_ends, topk_ends[sorted_indices]], dim=0)
-                all_topk_scores = torch.cat([all_topk_scores, topk_scores[sorted_indices]], dim=0)
-                all_ment_type = torch.cat([all_ment_type,
-                                           torch.tensor([ment_idx] * sorted_indices.shape[0]).cuda()], dim=0)
+        # Sort the mentions by (start) and tiebreak with (end)
+        sort_scores = topk_starts + 1e-5 * topk_ends
+        _, sorted_indices = torch.sort(sort_scores, dim=0)
 
         if self.ment_ordering == 'document':
             # Order mentions by their order in document
-            sort_scores = all_topk_starts + 1e-5 * all_topk_ends + 1e-5 * all_ment_type
+            sort_scores = topk_starts + 1e-5 * topk_ends + 1e-5 * topk_ment_type
             _, sorted_indices = torch.sort(sort_scores, dim=0)
 
-            return (all_topk_starts[sorted_indices], all_topk_ends[sorted_indices],
-                    all_topk_scores[sorted_indices], all_ment_type[sorted_indices])
+            return (topk_starts[sorted_indices], topk_ends[sorted_indices],
+                    topk_scores[sorted_indices], topk_ment_type[sorted_indices])
         else:
             # Else mentions remain ordered by their type
-            return (all_topk_starts, all_topk_ends, all_topk_scores, all_ment_type)
+            return topk_starts, topk_ends, topk_scores, topk_ment_type
 
     def get_mention_embs_and_actions(self, example):
         encoded_doc = self.doc_encoder(example)
         pred_starts, pred_ends, pred_scores, pred_ment_type = self.get_pred_mentions(example, encoded_doc)
 
         pred_mentions = list(zip(pred_starts.tolist(), pred_ends.tolist(), pred_ment_type.tolist()))
-        mention_embs = self.get_span_embeddings(encoded_doc, pred_starts, pred_ends, get_doc_type(example))
+        mention_embs = self.get_span_embeddings(example["doc_type"], encoded_doc, pred_starts, pred_ends)
         mention_emb_list = torch.unbind(mention_embs, dim=0)
         pred_scores_list = torch.unbind(torch.unsqueeze(pred_scores, dim=1))
 
-        gt_actions = self.get_actions(pred_mentions, example["clusters"])
+        if self.dataset == "kbp_2015":
+            clusters = get_clusters(example["clusters"], key="subtype_val")
+        else:
+            clusters = example["clusters"]
+        gt_actions = self.get_actions(pred_mentions, clusters)
         return pred_mentions, gt_actions, mention_emb_list, pred_scores_list
 
     def forward(self, example, teacher_forcing=False):

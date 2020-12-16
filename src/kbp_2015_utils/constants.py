@@ -30,5 +30,3 @@ EVENT_SUBTYPES = ['business_declarebankruptcy', 'business_endorg', 'business_mer
 EVENT_SUBTYPES_TO_IDX = {event_subtype: idx for idx, event_subtype in enumerate(EVENT_SUBTYPES)}
 
 
-MAX_SPAN_WIDTH = 1
-SPANS_TO_LEN_RATIO = 0.05

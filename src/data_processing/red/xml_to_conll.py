@@ -11,7 +11,7 @@ from os import path
 from transformers import BertTokenizer
 from data_processing.red.utils import get_ent_info, get_clusters_from_xml
 import argparse
-from red_utils.constants import ELEM_TYPE_TO_IDX, DUPLICATE_START_TAG, DUPLICATE_END_TAG
+from data_utils.constants import ELEM_TYPE_TO_IDX, DUPLICATE_START_TAG, DUPLICATE_END_TAG
 
 BERT_RE = re.compile(r'## *')
 NEWLINE_TOKEN = "[NEWL]"

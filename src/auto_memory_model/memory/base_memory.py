@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from pytorch_utils.modules import MLP
 import math
+from kbp_2015_utils.constants import EVENT_SUBTYPES, EVENT_TYPES
 
 LOG2 = math.log(2)
 
@@ -13,7 +14,7 @@ class BaseMemory(nn.Module):
                  **kwargs):
         super(BaseMemory, self).__init__()
         self.dataset = dataset
-        if self.dataset == 'red':
+        if self.dataset == 'kbp_2015':
             self.num_feats = 3
         else:
             self.num_feats = 3
@@ -45,8 +46,11 @@ class BaseMemory(nn.Module):
             self.alpha = MLP(2 * self.mem_size, 300, 1, num_hidden_layers=1, bias=True, drop_module=drop_module)
 
         self.last_action_embeddings = nn.Embedding(5, self.emb_size)
-        self.ment_type_emb = nn.Embedding(2, self.emb_size)
-        self.doc_type_emb = nn.Embedding(3, self.emb_size)
+        if self.dataset == 'kbp_2015':
+            self.ment_type_emb = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
+            self.coarse_ment_type_emb = nn.Embedding(len(EVENT_TYPES), self.emb_size)
+
+        self.doc_type_emb = nn.Embedding(2, self.emb_size)
         self.distance_embeddings = nn.Embedding(10, self.emb_size)
         self.counter_embeddings = nn.Embedding(10, self.emb_size)
 

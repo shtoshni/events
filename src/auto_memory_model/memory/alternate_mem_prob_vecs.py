@@ -1,7 +1,7 @@
 import torch
 from auto_memory_model.memory.base_fixed_memory import BaseMemory
 from pytorch_utils.modules import MLP
-from red_utils.constants import ELEM_TYPE_TO_IDX
+from data_utils.constants import ELEM_TYPE_TO_IDX
 
 
 class AlternateProbMemory(BaseMemory):

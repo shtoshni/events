@@ -10,16 +10,19 @@ import numpy as np
 from transformers import get_linear_schedule_with_warmup
 
 from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
-from red_utils.utils import load_data
-from coref_utils.utils import mention_to_cluster
+from data_utils.utils import load_data
+from coref_utils.utils import get_mention_to_cluster
 from coref_utils.metrics import CorefEvaluator
 import pytorch_utils.utils as utils
+from data_utils.utils import get_clusters
 from auto_memory_model.controller.utils import pick_controller
 
 
 EPS = 1e-8
 NUM_STUCK_EPOCHS = 20
+
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger()
 
 
 class Experiment:
@@ -36,7 +39,10 @@ class Experiment:
                  slurm_id=None, **kwargs):
 
         self.args = args
-        # Set the random seed first
+
+        # Set dataset
+        self.dataset = args.dataset
+        # Set the random seed next
         self.seed = seed
         # Prepare data info
         self.train_examples, self.dev_examples, self.test_examples \
@@ -54,7 +60,7 @@ class Experiment:
         self.slurm_id = slurm_id
 
         # Get model paths
-        self.pretrained_mention_model=pretrained_mention_model
+        self.pretrained_mention_model = pretrained_mention_model
         self.model_dir = model_dir
         self.data_dir = data_dir
         self.conll_data_dir = conll_data_dir
@@ -245,94 +251,93 @@ class Experiment:
                 total_actions = 0.0
 
                 # Output file to write the outputs
-                if self.focus_group == 'joint':
-                    evaluator_dict = OrderedDict(
-                        [('entity', CorefEvaluator()), ('event', CorefEvaluator()), ('joint', CorefEvaluator())])
-                    oracle_evaluator_dict = OrderedDict(
-                        [('entity', CorefEvaluator()), ('event', CorefEvaluator()), ('joint', CorefEvaluator())])
-                else:
-                    evaluator_dict = OrderedDict([(self.focus_group, CorefEvaluator())])
-                    oracle_evaluator_dict = OrderedDict([(self.focus_group, CorefEvaluator())])
-
+                evaluator = CorefEvaluator()
+                oracle_evaluator = CorefEvaluator()
                 coref_predictions, subtoken_maps = {}, {}
-                for example in data_iter:
-                    output = model(example)
-                    if output is None:
-                        # Possible when doing just events where some files don't have event annotations
-                        continue
-                    loss, action_list, pred_mentions, gt_actions = output
 
+                for example in data_iter:
+                    loss, action_list, pred_mentions, gt_actions = model(example)
                     for pred_action, gt_action in zip(action_list, gt_actions):
                         pred_class_counter[pred_action[1]] += 1
                         gt_class_counter[gt_action[1]] += 1
 
                         if tuple(pred_action) == tuple(gt_action):
                             corr_actions += 1
+
                     total_actions += len(action_list)
 
                     predicted_clusters = action_sequences_to_clusters(action_list, pred_mentions)
-                    oracle_clusters = action_sequences_to_clusters(gt_actions, pred_mentions)
+                    predicted_clusters, mention_to_predicted = \
+                        get_mention_to_cluster(predicted_clusters, threshold=self.cluster_threshold)
+
+                    if self.dataset == "kbp_2015":
+                        gt_clusters = get_clusters(example["clusters"], key="subtype_val")
+                    else:
+                        gt_clusters = example["clusters"]
+
+                    gold_clusters, mention_to_gold = \
+                        get_mention_to_cluster(gt_clusters, threshold=self.cluster_threshold)
 
                     coref_predictions[example["doc_key"]] = predicted_clusters
                     subtoken_maps[example["doc_key"]] = example["subtoken_map"]
 
-                    for focus_group in evaluator_dict:
-                        filt_clusters, filt_mention_to_predicted =\
-                            mention_to_cluster(predicted_clusters, threshold=self.cluster_threshold,
-                                               focus_group=focus_group)
-                        filt_gold_clusters, filt_gold_mention_to_predicted =\
-                            mention_to_cluster(example["clusters"], threshold=self.cluster_threshold,
-                                               focus_group=focus_group)
-
-                        filt_oracle_clusters, filt_mention_to_oracle = \
-                            mention_to_cluster(oracle_clusters, threshold=self.cluster_threshold,
-                                               focus_group=focus_group)
-
-                        if len(filt_gold_clusters) > 0:
-                            evaluator_dict[focus_group].update(
-                                filt_clusters, filt_gold_clusters,
-                                filt_mention_to_predicted, filt_gold_mention_to_predicted)
-                            oracle_evaluator_dict[focus_group].update(
-                                filt_oracle_clusters, filt_gold_clusters,
-                                filt_mention_to_oracle, filt_gold_mention_to_predicted)
+                    oracle_clusters = action_sequences_to_clusters(gt_actions, pred_mentions)
+                    oracle_clusters, mention_to_oracle = \
+                        get_mention_to_cluster(oracle_clusters, threshold=self.cluster_threshold)
+                    evaluator.update(predicted_clusters, gold_clusters,
+                                     mention_to_predicted, mention_to_gold)
+                    oracle_evaluator.update(oracle_clusters, gold_clusters,
+                                            mention_to_oracle, mention_to_gold)
 
                     log_example = dict(example)
                     log_example["gt_actions"] = gt_actions
                     log_example["pred_actions"] = action_list
-                    log_example["pred_mentions"] = pred_mentions
                     log_example["predicted_clusters"] = predicted_clusters
 
                     log_f.write(json.dumps(log_example) + "\n")
 
-                logging.info(f"Ground Truth Actions:  {gt_class_counter}")
-                logging.info(f"Predicted Actions: {pred_class_counter}")
+                print("Ground Truth Actions:", gt_class_counter)
+                print("Predicted Actions:", pred_class_counter)
 
-                result_dict = OrderedDict()
                 # Print individual metrics
-                for focus_group in evaluator_dict:
-                    indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
-                    perf_str = ""
-                    result_dict[focus_group] = OrderedDict()
-                    for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator_dict[focus_group].evaluators):
-                        metric_num = indv_evaluator.get_f1() * 100
-                        perf_str += ", " + indv_metric + ": {:.1f}".format(metric_num)
-                        result_dict[focus_group][indv_metric] = OrderedDict()
-                        result_dict[focus_group][indv_metric]['recall'] = round(indv_evaluator.get_recall() * 100, 1)
-                        result_dict[focus_group][indv_metric]['precision'] = round(
-                            indv_evaluator.get_precision() * 100, 1)
-                        result_dict[focus_group][indv_metric]['fscore'] = round(indv_evaluator.get_f1() * 100, 1)
+                result_dict = OrderedDict()
+                indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
+                perf_str = ""
+                for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator.evaluators):
+                    perf_str += ", " + indv_metric + ": {:.1f}".format(indv_evaluator.get_f1() * 100)
+                    result_dict[indv_metric] = OrderedDict()
+                    result_dict[indv_metric]['recall'] = round(indv_evaluator.get_recall() * 100, 1)
+                    result_dict[indv_metric]['precision'] = round(indv_evaluator.get_precision() * 100, 1)
+                    result_dict[indv_metric]['fscore'] = round(indv_evaluator.get_f1() * 100, 1)
 
-                    fscore = round(evaluator_dict[focus_group].get_f1() * 100, 1)
-                    result_dict[focus_group]['fscore'] = fscore
-                    if self.focus_group == focus_group:
-                        result_dict['fscore'] = fscore
-                    logging.info(focus_group.capitalize())
-                    if split != 'test':
-                        logging.info("F-score: %.1f %s" % (fscore, perf_str))
-                        logging.info("Oracle F-score: %.1f\n" % (oracle_evaluator_dict[focus_group].get_f1() * 100))
+                fscore = evaluator.get_f1() * 100
+                result_dict['fscore'] = round(fscore, 1)
+                logger.info("F-score: %.1f %s" % (fscore, perf_str))
 
-                # logging.info("Action accuracy: %.3f" % (corr_actions/total_actions))
-                logging.info(log_file)
+                # Only use CoNLL evaluator script for final evaluation
+                # if final_eval and path.exists(self.conll_scorer) and path.exists(self.conll_data_dir):
+                #     gold_path = path.join(self.conll_data_dir, f'{split}.conll')
+                #     prediction_file = path.join(self.model_dir, f'{split}.conll')
+                #     conll_results = evaluate_conll(
+                #         self.conll_scorer, gold_path, coref_predictions, subtoken_maps, prediction_file)
+                #
+                #     for indv_metric in indv_metrics_list:
+                #         result_dict[indv_metric] = OrderedDict()
+                #         result_dict[indv_metric]['recall'] = round(conll_results[indv_metric.lower()]["r"], 1)
+                #         result_dict[indv_metric]['precision'] = round(conll_results[indv_metric.lower()]["p"], 1)
+                #         result_dict[indv_metric]['fscore'] = round(conll_results[indv_metric.lower()]["f"], 1)
+                #
+                #     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
+                #     result_dict['fscore'] = round(average_f1, 1)
+                #
+                #     logger.info("(CoNLL) F-score : %.1f, MUC: %.1f, Bcub: %.1f, CEAFE: %.1f"
+                #                 % (average_f1, conll_results["muc"]["f"], conll_results['bcub']["f"],
+                #                    conll_results['ceafe']["f"]))
+
+                logger.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
+                            (corr_actions / total_actions, oracle_evaluator.get_prf()[2]))
+                logger.info(log_file)
+                logger.handlers[0].flush()
 
         return result_dict
 
@@ -355,7 +360,7 @@ class Experiment:
         for key, val in vars(self.args).items():
             output_dict[key] = val
 
-        for split in ['dev', 'train', 'test']:  # , 'Test']:
+        for split in ['dev', 'test']:  # , 'Test']:
             logging.info('\n')
             logging.info('%s' % split.capitalize())
             result_dict = self.eval_model(split)

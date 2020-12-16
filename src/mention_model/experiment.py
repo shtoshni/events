@@ -13,7 +13,7 @@ from transformers import get_linear_schedule_with_warmup
 import pytorch_utils.utils as utils
 from mention_model.controller import Controller
 from torch.utils.tensorboard import SummaryWriter
-from red_utils.utils import load_data
+from data_utils.utils import load_data
 
 EPS = 1e-8
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
