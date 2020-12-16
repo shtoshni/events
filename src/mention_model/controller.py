@@ -18,7 +18,7 @@ class Controller(BaseController):
         assert(num_words == sum([len(sentence) for sentence in example["sentences"]]))
 
         filt_cand_starts, filt_cand_ends, flat_cand_mask = self.get_candidate_endpoints(encoded_doc, example)
-        span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends)
+        span_embs = self.get_span_embeddings(example["doc_type"], encoded_doc, filt_cand_starts, filt_cand_ends)
 
         filt_gold_mentions = self.get_gold_mentions(example["clusters"], num_words, flat_cand_mask)
         pred_mention_probs = {}

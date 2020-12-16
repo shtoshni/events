@@ -47,7 +47,7 @@ class BaseController(nn.Module):
         for category, category_vals in zip(["event_subtype", "event_type", "realis"],
                                            [EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS]):
             self.other.mention_mlp[category] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + self.emb_size,
+                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
                 hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
                 bias=True, drop_module=self.drop_module)
 
@@ -66,7 +66,7 @@ class BaseController(nn.Module):
 
         return width_scores
 
-    def get_span_embeddings(self, encoded_doc, ment_starts, ment_ends):
+    def get_span_embeddings(self, doc_type, encoded_doc, ment_starts, ment_ends):
         span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
 
         # Add span width embeddings
@@ -74,11 +74,10 @@ class BaseController(nn.Module):
         span_width_embs = self.other.span_width_embeddings(span_width_indices)
         span_emb_list.append(span_width_embs)
 
-        # doc_type_idx = DOC_TYPE_TO_IDX[doc_type]
-        # doc_type_emb = self.other.doc_type_emb(torch.tensor(doc_type_idx).long().cuda())
-        # doc_type_emb = torch.unsqueeze(doc_type_emb, dim=0)
-        # doc_type_emb = doc_type_emb.repeat(span_width_embs.shape[0], 1)
-        # span_emb_list.append(doc_type_emb)
+        doc_type_emb = self.other.doc_type_emb(torch.tensor(doc_type).long().cuda())
+        doc_type_emb = torch.unsqueeze(doc_type_emb, dim=0)
+        doc_type_emb = doc_type_emb.repeat(span_width_embs.shape[0], 1)
+        span_emb_list.append(doc_type_emb)
 
         if self.ment_emb == 'attn':
             num_words = encoded_doc.shape[0]  # T
@@ -121,10 +120,7 @@ class BaseController(nn.Module):
         filt_gold_ments["realis"] = gold_ments_realis.reshape(-1, len(REALIS_VALS))[flat_cand_mask].float()
 
         # Filtering shouldn't remove gold mentions
-        try:
-            assert(torch.sum(gold_ments_subtype) == torch.sum(filt_gold_ments["event_subtype"]))
-        except AssertionError:
-            print(torch.sum(gold_ments_subtype), torch.sum(filt_gold_ments["event_subtype"]))
+        assert(torch.sum(gold_ments_subtype) == torch.sum(filt_gold_ments["event_subtype"]))
 
         return filt_gold_ments
 

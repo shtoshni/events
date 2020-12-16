@@ -1,13 +1,15 @@
 import sys
-from os import path
-
+import os
 import time
 import logging
 import torch
+import json
+import numpy as np
+
+from os import path
 from collections import defaultdict, OrderedDict
 from transformers import get_linear_schedule_with_warmup
 
-import numpy as np
 import pytorch_utils.utils as utils
 from mention_model.controller import Controller
 from torch.utils.tensorboard import SummaryWriter
@@ -18,17 +20,18 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 
 class Experiment:
-    def __init__(self, data_dir=None, dataset='red',
+    def __init__(self, args, data_dir=None, dataset='kbp_2015',
                  model_dir=None, best_model_dir=None,
                  # Model params
                  seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False,
                  max_gradient_norm=1.0,
                  max_epochs=20, max_segment_len=512, eval=False,
-                 num_train_docs=None,
+                 num_train_docs=None, multitask=False,
                  # Other params
                  slurm_id=None,
                  **kwargs):
 
+        self.args = args
         self.slurm_id = slurm_id
         # Set the random seed first
         self.seed = seed
@@ -55,6 +58,7 @@ class Experiment:
         self.best_model_path = path.join(best_model_dir, 'model.pth')
 
         # Initialize model and training metadata
+        self.multitask = multitask
         self.finetune = finetune
         self.model = Controller(finetune=finetune, **kwargs)
         self.model = self.model.cuda()
@@ -121,7 +125,10 @@ class Experiment:
                 def handle_example(train_example):
                     self.train_info['global_steps'] += 1
                     loss = model(train_example)
-                    total_loss = sum([loss[loss_type] for loss_type in loss])
+                    if self.multitask:
+                        total_loss = sum([loss[loss_type] for loss_type in loss])
+                    else:
+                        total_loss = loss['event_subtype']
                     if not self.slurm_id:
                         writer.add_scalar(
                             "Loss/Total", total_loss,
@@ -237,12 +244,15 @@ class Experiment:
                     threshold = cur_threshold
 
         max_fscore = 100 * max_fscore  # F-score in percentage
+        if isinstance(max_fscore, torch.Tensor):
+            max_fscore = max_fscore.item()
+
         try:
             assert (all_golds == total_gold)
         except AssertionError:
             logging.info(f"Number of true mentions {all_golds} different from mentions "
                          f"filtered through {total_gold}")
-        logging.info("Max F-score: %.1f, Threshold: %.2f" % (max_fscore, threshold))
+        logging.info("F-score: %.1f, Threshold: %.2f" % (max_fscore, threshold))
         return max_fscore, threshold
 
     def final_eval(self):
@@ -251,24 +261,36 @@ class Experiment:
         self.load_model(self.best_model_path, best_model=True)
         logging.info("Loading best model after epoch: %d" %
                      self.train_info['epoch'])
-        logging.info(f"Threshold: {self.train_info['threshold']}")
+        logging.info(f"Threshold: {self.train_info['threshold']: .2f}")
         threshold = self.train_info['threshold']
 
-        perf_file = path.join(self.model_dir, "perf.txt")
-        with open(perf_file, 'w') as f:
-            # for split in ['Train', 'Valid']:
-            for split in ['Valid', 'Test']:
-                logging.info('\n')
-                logging.info('%s' % split)
-                split_f1, _ = self.eval_model(
-                    split.lower(), threshold=threshold, final_eval=True)
-                logging.info('Calculated F-score: %.1f' % split_f1)
+        perf_file = path.join(self.model_dir, "perf.json")
+        if self.slurm_id:
+            parent_dir = path.dirname(path.normpath(self.model_dir))
+            perf_dir = path.join(parent_dir, "perf")
+            if not path.exists(perf_dir):
+                os.makedirs(perf_dir)
+            perf_file = path.join(perf_dir, self.slurm_id + ".json")
 
-                f.write("%s\t%.1f\n" % (split, split_f1))
-                if not self.slurm_id:
-                    self.writer.add_scalar("F-score/{}".format(split), split_f1)
-            logging.info("Final performance summary at %s" % perf_file)
+        output_dict = {'model_dir': self.model_dir}
+        for key, val in vars(self.args).items():
+            output_dict[key] = val
 
+        for split in ['Valid', 'Test']:
+            logging.info('\n')
+            logging.info('%s' % split)
+            split_f1, _ = self.eval_model(
+                split.lower(), threshold=threshold, final_eval=True)
+            logging.info('Calculated F-score: %.1f' % split_f1)
+
+            output_dict[split] = split_f1
+
+            if not self.slurm_id:
+                self.writer.add_scalar("F-score/{}".format(split), split_f1)
+
+        json.dump(output_dict, open(perf_file, 'w'), indent=2)
+
+        logging.info("Final performance summary at %s" % perf_file)
         sys.stdout.flush()
         if not self.slurm_id:
             self.writer.close()

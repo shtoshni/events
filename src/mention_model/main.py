@@ -46,12 +46,14 @@ def main():
                         help='Number of training docs.')
     parser.add_argument('-dropout_rate', default=0.5, type=float,
                         help='Dropout rate')
-    parser.add_argument('-max_training_segments', default=10, type=int,
+    parser.add_argument('-max_training_segments', default=5, type=int,
                         help='Max. number of BERT segments in a document.')
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=20, type=int)
+                        help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
+    parser.add_argument('-no_multitask', dest='multitask', default=True, action="store_false",
+                        help='Mutlitask learning with event type loss and event realis loss')
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Initial learning rate",
@@ -84,7 +86,7 @@ def main():
     if not path.exists(log_dir):
         os.makedirs(log_dir)
 
-    Experiment(**vars(args))
+    Experiment(args, **vars(args))
 
 
 if __name__ == "__main__":
