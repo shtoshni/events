@@ -1,6 +1,7 @@
 import torch.nn as nn
 from os import path
 from transformers import BertModel, BertTokenizer
+from kbp_2015_utils.constants import SPEAKER_TAGS
 
 
 class BaseDocEncoder(nn.Module):
@@ -22,6 +23,10 @@ class BaseDocEncoder(nn.Module):
             self.bert = BertModel.from_pretrained(
                 bert_model_name, output_hidden_states=False, gradient_checkpointing=(True if finetune else False))
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+        if finetune:
+            self.tokenizer.add_special_tokens({'additional_special_tokens': SPEAKER_TAGS})
+            self.bert.resize_token_embeddings(len(self.tokenizer))
+
         self.pad_token = 0
 
         if not finetune:

@@ -2,6 +2,7 @@
 def get_mention_model_name(args):
     model_name_suffix = ""
     model_name_suffix += f'{args.dataset}' + "_"
+    model_name_suffix += f'{args.doc_proc}' + "_"
     model_name_suffix += 'mlp_' + f'{args.mlp_size}' + '_'
     # model_name_suffix += 'drop_' + f'{args.dropout_rate}' + '_'
     model_name_suffix += 'model_' + f'{args.model_size}' + '_'

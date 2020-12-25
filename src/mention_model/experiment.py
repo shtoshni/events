@@ -296,8 +296,12 @@ class Experiment:
             self.writer.close()
 
     def load_model(self, location, best_model=False):
-        checkpoint = torch.load(location)
+        # checkpoint = torch.load(location, map_location=torch.device('cpu'))
+        # self.model.load_state_dict(checkpoint['model'], strict=False, map_location=torch.device('cuda'))
+        checkpoint = torch.load(location, map_location=torch.device('cpu'))
         self.model.load_state_dict(checkpoint['model'], strict=False)
+        self.model.to(torch.device('cuda'))
+
         self.train_info = checkpoint['train_info']
         torch.set_rng_state(checkpoint['rng_state'])
 
@@ -311,6 +315,8 @@ class Experiment:
 
     def save_model(self, location, best_model=False):
         """Save model"""
+        # self.model.to(torch.device('cpu'))
+
         model_state_dict = OrderedDict(self.model.state_dict())
         if not self.finetune:
             for key in self.model.state_dict():
@@ -332,3 +338,5 @@ class Experiment:
 
         torch.save(save_dict, location)
         logging.info(f"Model saved at: {location}")
+
+        # self.model.to(torch.device('cuda'))

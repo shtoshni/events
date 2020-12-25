@@ -173,12 +173,15 @@ def read_source_doc(source_file, proc_source_file):
         token_idx_mapping_dict[orig_token_idx] = None  # The 0th character corresponds to space
 
     proc_doc_str = " "
+    cur_speaker = None
     for sentence in proc_doc["sentences"]:
         tokens = sentence["tokens"]
         # Verified that each processed sentence has a unique speaker. So the segmentation is fine.
         # We can just append the speaker tag before the start of sentence
         if "speaker" in tokens[0]:
-            proc_doc_str += f"{SPEAKER_TAGS[0]} {tokens[0]['speaker']} {SPEAKER_TAGS[1]} "
+            if cur_speaker != tokens[0]['speaker']:
+                proc_doc_str += f"{SPEAKER_TAGS[0]} {tokens[0]['speaker']} {SPEAKER_TAGS[1]} "
+            cur_speaker = tokens[0]['speaker']
 
         for token in tokens:
             cur_offset = len(proc_doc_str)
@@ -263,7 +266,8 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
                     # Document: "doc-prefix overlap-part" Span: "overlap-part y"
                     counter_idx, token_idx = char_to_tokenized_idx[span_start]
                     # Tokenize the remaining part of the span
-                    doc_span, last_non_trivial_idx = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_end)
+                    doc_span, last_non_trivial_idx = get_doc_span(
+                        proc_doc_str, token_idx_mapping_dict, char_offset, span_end)
                     last_non_trivial_idx += 1
                     orig_doc_span = orig_doc_str[char_offset: span_end]
                     try:
@@ -358,8 +362,6 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
     token_counter += len(rem_tokens) - newline_count
 
     tokenized_doc.extend(rem_tokens)
-    # if NEWLINE_TOKEN in tokenized_doc:
-    #     print (doc_name)
     return doc_type, tokenized_doc, ent_id_to_info, clusters
 
 
