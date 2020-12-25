@@ -29,4 +29,4 @@ EVENT_SUBTYPES = ['business_declarebankruptcy', 'business_endorg', 'business_mer
                   'transaction_transaction', 'transaction_transfermoney', 'transaction_transferownership']
 EVENT_SUBTYPES_TO_IDX = {event_subtype: idx for idx, event_subtype in enumerate(EVENT_SUBTYPES)}
 
-SPEAKER_TAGS = ["<speaker>", "</speaker>"]
+SPEAKER_TAGS = ["[SPEAKER_START]", "[SPEAKER_END]"]

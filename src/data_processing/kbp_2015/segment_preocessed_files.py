@@ -145,11 +145,12 @@ def tokenize_span(span, tokenizer, doc_name):
     if span == '':
         return [], 0
 
-    span = span.replace("\n", "<N>")
-    span = span.replace("<N>", NEWLINE_TOKEN)
+    span = span.replace("\n", NEWLINE_TOKEN)
     newline_count = span.count(NEWLINE_TOKEN)
 
     tokenized_span = tokenizer.tokenize(span)
+    # if newline_count > 0:
+    #     print(tokenized_span)
 
     if "[UNK]" in tokenized_span:
         # Try cleaning the text and reprocess
@@ -216,12 +217,16 @@ def get_doc_span(doc_str, token_idx_mapping_dict, span_start, span_end):
         return doc_span.strip()
 
     else:
+        last_non_trivial_idx = None
         for char_idx in range(span_start, span_end):
             mapped_idx = token_idx_mapping_dict[char_idx]
-            if mapped_idx is not None:
-                doc_span += doc_str[mapped_idx]
+            # if mapped_idx is not None:
+            doc_span += doc_str[mapped_idx]
+            if mapped_idx != 0:
+                # 0 denotes the trivial mapping
+                last_non_trivial_idx = mapped_idx
 
-        return doc_span.strip()
+        return doc_span.strip(), last_non_trivial_idx
 
 
 def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
@@ -247,7 +252,7 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
         if real_span not in real_span_to_tokenized_span:
             if char_offset > span_start:
                 # Overlapping span
-                doc_span = get_doc_span(proc_doc_str, token_idx_mapping_dict, span_start, span_end)
+                doc_span, last_non_trivial_idx = get_doc_span(proc_doc_str, token_idx_mapping_dict, span_start, span_end)
                 orig_doc_span = orig_doc_str[span_start: span_end]
                 assert (doc_span == orig_doc_span)
                 relv_tokens, _ = tokenize_span(doc_span, tokenizer, doc_name)
@@ -257,7 +262,7 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
                     # Document: "doc-prefix overlap-part" Span: "overlap-part y"
                     counter_idx, token_idx = char_to_tokenized_idx[span_start]
                     # Tokenize the remaining part of the span
-                    doc_span = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_end)
+                    doc_span, last_non_trivial_idx = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_end)
                     orig_doc_span = orig_doc_str[char_offset: span_end]
                     assert (doc_span == orig_doc_span.strip())
 
@@ -292,7 +297,7 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
                     print("JESUS")
                     raise ValueError(doc_name)
             else:
-                before_span_str = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_start)
+                before_span_str, _ = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_start)
                 before_span_tokens, newline_count = tokenize_span(before_span_str, tokenizer, doc_name)
                 tokenized_doc.extend(before_span_tokens)
 
@@ -301,7 +306,8 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
                 char_to_tokenized_idx[span_start] = (token_counter, len(tokenized_doc))
 
                 # Tokenize the span
-                doc_span = get_doc_span(proc_doc_str, token_idx_mapping_dict, span_start, span_end)
+                doc_span, last_non_trivial_idx = get_doc_span(proc_doc_str, token_idx_mapping_dict,
+                                                              span_start, span_end)
                 orig_doc_span = orig_doc_str[span_start: span_end]
                 try:
                     assert (doc_span == orig_doc_span.strip())
@@ -327,12 +333,16 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
             ent_id_to_info[mention_info["id"]] = tuple([tokenized_start, tokenized_end, mention_info])
 
     # Add the tokens after the last span
-    rem_doc = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, -1)
+    if last_non_trivial_idx is None:
+        raise ValueError
+    rem_doc = proc_doc_str[last_non_trivial_idx + 1:]
     rem_tokens, newline_count = tokenize_span(rem_doc, tokenizer, doc_name)
     # Don't count newline tokens as they will ultimately be removed.
     token_counter += len(rem_tokens) - newline_count
 
     tokenized_doc.extend(rem_tokens)
+    if NEWLINE_TOKEN in tokenized_doc:
+        print (doc_name)
     return doc_type, tokenized_doc, ent_id_to_info, clusters
 
 
