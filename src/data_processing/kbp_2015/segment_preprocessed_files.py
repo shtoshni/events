@@ -170,7 +170,7 @@ def read_source_doc(source_file, proc_source_file):
     proc_doc = json.loads(open(proc_source_file).read())
     token_idx_mapping_dict = OrderedDict()
     for orig_token_idx in range(len(doc_str)):
-        token_idx_mapping_dict[orig_token_idx] = 0  # The 0th character corresponds to space
+        token_idx_mapping_dict[orig_token_idx] = None  # The 0th character corresponds to space
 
     proc_doc_str = " "
     for sentence in proc_doc["sentences"]:
@@ -220,10 +220,9 @@ def get_doc_span(doc_str, token_idx_mapping_dict, span_start, span_end):
         last_non_trivial_idx = None
         for char_idx in range(span_start, span_end):
             mapped_idx = token_idx_mapping_dict[char_idx]
-            # if mapped_idx is not None:
-            doc_span += doc_str[mapped_idx]
-            if mapped_idx != 0:
-                # 0 denotes the trivial mapping
+
+            if mapped_idx is not None:
+                doc_span += doc_str[mapped_idx]
                 last_non_trivial_idx = mapped_idx
 
         return doc_span.strip(), last_non_trivial_idx
@@ -243,7 +242,7 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
     token_counter = 0
     char_offset = 0  # Till what point has the document been processed
     ent_id_to_info = OrderedDict()
-
+    last_non_trivial_idx  = 0
     real_span_to_tokenized_span = {}
     char_to_tokenized_idx = {}
     for span_start, span_end, mention_info in mention_list:
@@ -252,9 +251,11 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
         if real_span not in real_span_to_tokenized_span:
             if char_offset > span_start:
                 # Overlapping span
-                doc_span, last_non_trivial_idx = get_doc_span(proc_doc_str, token_idx_mapping_dict, span_start, span_end)
+                doc_span = proc_doc_str[token_idx_mapping_dict[span_start]: token_idx_mapping_dict[span_end - 1] + 1]
+                last_non_trivial_idx = token_idx_mapping_dict[span_end - 1] + 1
+
                 orig_doc_span = orig_doc_str[span_start: span_end]
-                assert (doc_span == orig_doc_span)
+                assert (doc_span.replace(" ", "") == orig_doc_span.replace(" ", ""))
                 relv_tokens, _ = tokenize_span(doc_span, tokenizer, doc_name)
 
                 if span_start in char_to_tokenized_idx:
@@ -263,8 +264,12 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
                     counter_idx, token_idx = char_to_tokenized_idx[span_start]
                     # Tokenize the remaining part of the span
                     doc_span, last_non_trivial_idx = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_end)
+                    last_non_trivial_idx += 1
                     orig_doc_span = orig_doc_str[char_offset: span_end]
-                    assert (doc_span == orig_doc_span.strip())
+                    try:
+                        assert (doc_span.replace(" ", "") == orig_doc_span.replace(" ", ""))
+                    except AssertionError:
+                        sys.exit()
 
                     remaining_tokens, newline_count = tokenize_span(doc_span, tokenizer, doc_name)
                     tokenized_doc.extend(remaining_tokens)
@@ -297,7 +302,20 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
                     print("JESUS")
                     raise ValueError(doc_name)
             else:
-                before_span_str, _ = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_start)
+                if token_idx_mapping_dict[span_start] is None:
+                    # 3 spans in training and dev had annotations in URL text which were preprocessed out
+                    print("Found None", doc_name, orig_doc_str[span_start: span_end])
+                    # continue
+                    before_span_str, _ = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_start)
+                    before_span_tokens, newline_count = tokenize_span(before_span_str, tokenizer, doc_name)
+                    tokenized_doc.extend(before_span_tokens)
+
+                    # Don't count newline tokens as they will ultimately be removed.
+                    token_counter += len(before_span_tokens) - newline_count
+                    char_to_tokenized_idx[span_start] = (token_counter, len(tokenized_doc))
+                    continue
+
+                before_span_str = proc_doc_str[last_non_trivial_idx: token_idx_mapping_dict[span_start]]
                 before_span_tokens, newline_count = tokenize_span(before_span_str, tokenizer, doc_name)
                 tokenized_doc.extend(before_span_tokens)
 
@@ -306,13 +324,14 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
                 char_to_tokenized_idx[span_start] = (token_counter, len(tokenized_doc))
 
                 # Tokenize the span
-                doc_span, last_non_trivial_idx = get_doc_span(proc_doc_str, token_idx_mapping_dict,
-                                                              span_start, span_end)
+                doc_span = proc_doc_str[token_idx_mapping_dict[span_start]: token_idx_mapping_dict[span_end - 1] + 1]
+                last_non_trivial_idx = token_idx_mapping_dict[span_end - 1] + 1
+
                 orig_doc_span = orig_doc_str[span_start: span_end]
                 try:
-                    assert (doc_span == orig_doc_span.strip())
+                    assert (doc_span.replace(" ", "") == orig_doc_span.replace(" ", ""))
                 except AssertionError:
-                    print(doc_name, orig_doc_str[span_start: span_end])
+                    print(doc_name, doc_span, orig_doc_str[span_start: span_end])
                     continue
 
                 span_tokens, newline_count = tokenize_span(doc_span, tokenizer, doc_name)
@@ -333,16 +352,14 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
             ent_id_to_info[mention_info["id"]] = tuple([tokenized_start, tokenized_end, mention_info])
 
     # Add the tokens after the last span
-    if last_non_trivial_idx is None:
-        raise ValueError
-    rem_doc = proc_doc_str[last_non_trivial_idx + 1:]
+    rem_doc = proc_doc_str[last_non_trivial_idx:]
     rem_tokens, newline_count = tokenize_span(rem_doc, tokenizer, doc_name)
     # Don't count newline tokens as they will ultimately be removed.
     token_counter += len(rem_tokens) - newline_count
 
     tokenized_doc.extend(rem_tokens)
-    if NEWLINE_TOKEN in tokenized_doc:
-        print (doc_name)
+    # if NEWLINE_TOKEN in tokenized_doc:
+    #     print (doc_name)
     return doc_type, tokenized_doc, ent_id_to_info, clusters
 
 
