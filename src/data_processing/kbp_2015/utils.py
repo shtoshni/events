@@ -27,12 +27,12 @@ def parse_ann_file(ann_file):
 
             span_info = (span_start, span_end, subtype)
             if span_info in unique_spans:
-                print(f"Detected a duplicate span in {ann_file}: "
-                      f"Event ID {event_id} is duplicate with {unique_spans[span_info]}")
-                print("DUPLICATE SPANS ARE NOT ADDED TO PROCESSED DOC")
-                continue
-            else:
-                unique_spans[span_info] = event_id
+            #     print(f"Detected a duplicate span in {ann_file}: "
+            #           f"Event ID {event_id} is duplicate with {unique_spans[span_info]}")
+            #     print("DUPLICATE SPANS ARE NOT ADDED TO PROCESSED DOC")
+            #     continue
+            # else:
+                unique_spans[span_info].add(event_id)
 
             event_info["id"] = event_id
 
