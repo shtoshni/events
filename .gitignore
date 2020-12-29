@@ -6,3 +6,4 @@ models/
 .idea/
 slurm_scripts/
 proc_data/
+EvmEval/
