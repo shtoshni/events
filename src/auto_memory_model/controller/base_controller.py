@@ -45,8 +45,7 @@ class BaseController(nn.Module):
 
         self.other.mention_mlp = nn.ModuleDict()
 
-        for category, category_vals in zip(["event_subtype", "event_type", "realis"],
-                                           [EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS]):
+        for category, category_vals in zip(["event_subtype"], [EVENT_SUBTYPES]):
             self.other.mention_mlp[category] = MLP(
                 input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
                 hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
@@ -96,35 +95,6 @@ class BaseController(nn.Module):
         span_embs = torch.cat(span_emb_list, dim=-1)
         return span_embs
 
-    def get_gold_mentions(self, clusters, num_words, flat_cand_mask):
-        gold_ments_subtype = torch.zeros(num_words, self.max_span_width, len(EVENT_SUBTYPES)).cuda()
-        gold_ments_type = torch.zeros(num_words, self.max_span_width, len(EVENT_TYPES)).cuda()
-        gold_ments_realis = torch.zeros(num_words, self.max_span_width, len(REALIS_VALS)).cuda()
-
-        for cluster in clusters:
-            for mention in cluster:
-                span_start, span_end, mention_info = mention
-                subtype_val = mention_info["subtype_val"]
-                type_val = mention_info["type_val"]
-                realis_val = mention_info["realis_val"]
-
-                span_width = span_end - span_start + 1
-                if span_width <= self.max_span_width:
-                    span_width_idx = span_width - 1
-                    gold_ments_subtype[span_start, span_width_idx, subtype_val] = 1
-                    gold_ments_type[span_start, span_width_idx, type_val] = 1
-                    gold_ments_realis[span_start, span_width_idx, realis_val] = 1
-
-        filt_gold_ments = {}
-        filt_gold_ments["event_subtype"] = gold_ments_subtype.reshape(-1, len(EVENT_SUBTYPES))[flat_cand_mask].float()
-        filt_gold_ments["event_type"] = gold_ments_type.reshape(-1, len(EVENT_TYPES))[flat_cand_mask].float()
-        filt_gold_ments["realis"] = gold_ments_realis.reshape(-1, len(REALIS_VALS))[flat_cand_mask].float()
-
-        # Filtering shouldn't remove gold mentions
-        assert(torch.sum(gold_ments_subtype) == torch.sum(filt_gold_ments["event_subtype"]))
-
-        return filt_gold_ments
-
     def get_candidate_endpoints(self, encoded_doc, example):
         num_words = encoded_doc.shape[0]
 
@@ -142,9 +112,9 @@ class BaseController(nn.Module):
         constraint1 = (cand_ends < num_words)
         # Removing this constraint because sentence boundaries based on simple heuristics such as "\n"
         # don't work for KBP
-        # constraint2 = (cand_start_sent_indices == cand_end_sent_indices)
-        # cand_mask = constraint1 & constraint2
-        cand_mask = constraint1
+        constraint2 = (cand_start_sent_indices == cand_end_sent_indices)
+        cand_mask = constraint1 & constraint2
+        # cand_mask = constraint1
         flat_cand_mask = cand_mask.reshape(-1)
 
         # Filter and flatten the candidate end points

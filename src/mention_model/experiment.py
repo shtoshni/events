@@ -14,6 +14,7 @@ import pytorch_utils.utils as utils
 from mention_model.controller import Controller
 from torch.utils.tensorboard import SummaryWriter
 from data_utils.utils import load_data
+from kbp_2015_utils.constants import EVENT_SUBTYPES_NAME
 
 EPS = 1e-8
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
@@ -195,7 +196,14 @@ class Experiment:
         model = self.model
         model.eval()
 
+        max_span_width = self.args.max_span_width
         dev_examples = self.data_iter_map[split]
+        mention_counter = 0
+
+        if final_eval and split == "test":
+            span_boundary_to_token_file = path.join(self.data_dir, "test_token.json")
+            span_boundary_to_token_dict = json.loads(open(span_boundary_to_token_file).read())
+            tbf_f = open(path.join(self.model_dir, "nugget.tbf"), "w")
 
         with torch.no_grad():
             # total_gold = defaultdict(float)
@@ -204,7 +212,41 @@ class Experiment:
             # Output file to write the outputs
             agg_results = {}
             for dev_example in dev_examples:
-                preds, y = model(dev_example)
+                preds, y, flat_cand_mask = model(dev_example)
+
+                if final_eval and split == "test":
+                    doc_key = dev_example['doc_key']
+                    span_boundary_to_token_data = span_boundary_to_token_dict[doc_key]
+                    tbf_f.write(f"#BeginOfDocument {doc_key}\n")
+                    pred_mentions_idx = torch.nonzero((preds >= threshold), as_tuple=False).tolist()
+                    mask_nonzero_idx = torch.squeeze(torch.nonzero(flat_cand_mask, as_tuple=False), dim=1).tolist()
+
+                    token_idx_to_orig_span_start = dev_example["token_idx_to_orig_span_start"]
+                    token_idx_to_orig_span_end = dev_example["token_idx_to_orig_span_end"]
+                    orig_doc_str = dev_example["orig_doc"]
+
+                    for (flattened_idx, event_subtype_idx) in pred_mentions_idx:
+                        orig_flattened_idx = mask_nonzero_idx[flattened_idx]
+                        token_idx = orig_flattened_idx // max_span_width
+                        num_tokens = orig_flattened_idx % max_span_width
+
+                        if str(token_idx) in token_idx_to_orig_span_start and \
+                                str(token_idx + num_tokens) in token_idx_to_orig_span_end:
+                            orig_span_start = token_idx_to_orig_span_start[str(token_idx)]
+                            orig_span_end = token_idx_to_orig_span_end[str(token_idx + num_tokens)]
+
+                            span_boundary_str = f"{orig_span_start}-{orig_span_end}"
+                            if span_boundary_str not in span_boundary_to_token_data:
+                                continue
+                            orig_token_idx = span_boundary_to_token_data[span_boundary_str]
+
+                            orig_span_str = orig_doc_str[orig_span_start: orig_span_end]
+                            event_subtype_name = EVENT_SUBTYPES_NAME[event_subtype_idx]
+
+                            tbf_f.write(f"brat_conversion\t{doc_key}\tE{mention_counter}\t{orig_token_idx}\t"
+                                        f"{orig_span_str}\t{event_subtype_name}\tActual\n")
+                            mention_counter += 1
+                    tbf_f.write(f"#EndOfDocument\n")
 
                 all_golds += sum([len(cluster) for cluster in dev_example["clusters"]])
                 total_gold += torch.sum(y).item()
@@ -253,6 +295,9 @@ class Experiment:
             logging.info(f"Number of true mentions {all_golds} different from mentions "
                          f"filtered through {total_gold}")
         logging.info("F-score: %.1f, Threshold: %.2f" % (max_fscore, threshold))
+
+        if final_eval and split == "test":
+            tbf_f.close()
         return max_fscore, threshold
 
     def final_eval(self):

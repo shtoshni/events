@@ -17,6 +17,7 @@ def f1(p_num, p_den, r_num, r_den, beta=1):
 class CorefEvaluator(object):
     def __init__(self):
         self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
+        self.evaluators.append(BlancEvaluator())
 
     def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
         for e in self.evaluators:
@@ -69,6 +70,53 @@ class Evaluator(object):
 
     def get_counts(self):
         return self.p_num, self.p_den, self.r_num, self.r_den
+
+
+class BlancEvaluator(object):
+    def __init__(self, beta=1):
+        self.right_coref = 0
+        self.wrong_coref = 0
+        self.right_non = 0
+        self.wrong_non = 0
+        self.metric = blanc
+        self.beta = beta
+
+    def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
+        rc, wc, rn, wn = self.metric(predicted, gold)
+
+        self.right_coref += rc
+        self.wrong_coref += wc
+        self.right_non += rn
+        self.wrong_non += wn
+
+    def get_f1(self):
+        beta = self.beta
+
+        rc_recall = self.right_coref / (self.right_coref + self.wrong_non)
+        rc_prec = self.right_coref / (self.right_coref + self.wrong_coref)
+
+        fc = (1 + beta * beta) * rc_prec * rc_recall / (beta * beta * rc_prec + rc_recall)
+
+        rn_prec = self.right_non / (self.right_non + self.wrong_non)
+        rn_recall = self.right_non / (self.right_non + self.wrong_coref)
+        fn = (1 + beta * beta) * rn_prec * rn_recall / (beta * beta * rn_prec + rn_recall)
+
+        return (fc + fn) / 2
+
+    def get_recall(self):
+        rc_recall = self.right_coref / (self.right_coref + self.wrong_non)
+        rn_recall = self.right_non / (self.right_non + self.wrong_coref)
+
+        return (rc_recall + rn_recall) / 2
+
+    def get_precision(self):
+        rc_prec = self.right_coref / (self.right_coref + self.wrong_coref)
+        rn_prec = self.right_non / (self.right_non + self.wrong_non)
+
+        return (rc_prec + rn_prec) / 2
+
+    def get_prf(self):
+        return self.get_precision(), self.get_recall(), self.get_f1()
 
 
 def evaluate_documents(documents, metric, beta=1):
@@ -128,6 +176,48 @@ def ceafe(clusters, gold_clusters):
 
     similarity = sum(scores[matching[:, 0], matching[:, 1]])
     return similarity, len(clusters), similarity, len(gold_clusters)
+
+
+def blanc(predicted, gold):
+    def get_coref_and_non_coref_links(clusters):
+        coref_links = set()
+        mentions = set()
+        for cluster in clusters:
+            for idx, mention1 in enumerate(cluster):
+                mentions.add(tuple(mention1))
+                for mention2 in cluster[idx + 1:]:
+                    link = tuple(sorted([tuple(mention1), tuple(mention2)], key=lambda x: x[0] + 1e-5 * x[1]))
+                    coref_links.add(link)
+
+        non_coref_links = set()
+        mentions = sorted(list(mentions), key=lambda x: x[0] + 1e-5 * x[1])
+        for idx, mention1 in enumerate(mentions):
+            for mention2 in mentions[idx + 1:]:
+                if (mention1, mention2) in coref_links:
+                    continue
+                else:
+                    non_coref_links.add((mention1, mention2))
+
+        return coref_links, non_coref_links
+
+    gold_cl, gold_noncl = get_coref_and_non_coref_links(gold)
+    predicted_cl, predicted_noncl = get_coref_and_non_coref_links(predicted)
+
+    rc, wc, rn, wn = 0, 0, 0, 0
+
+    for mention_pair in predicted_cl:
+        if mention_pair in gold_cl:
+            rc += 1
+        else:
+            wc += 1
+
+    for mention_pair in predicted_noncl:
+        if mention_pair in gold_noncl:
+            rn += 1
+        else:
+            wn += 1
+
+    return rc, wc, rn, wn
 
 
 def lea(clusters, mention_to_gold):

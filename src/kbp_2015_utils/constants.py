@@ -30,3 +30,17 @@ EVENT_SUBTYPES = ['business_declarebankruptcy', 'business_endorg', 'business_mer
 EVENT_SUBTYPES_TO_IDX = {event_subtype: idx for idx, event_subtype in enumerate(EVENT_SUBTYPES)}
 
 SPEAKER_TAGS = ["[SPEAKER_START]", "[SPEAKER_END]"]
+
+
+EVENT_SUBTYPES_NAME = [
+    'Business_Declare-Bankruptcy', 'Business_End-Org', 'Business_Merge-Org', 'Business_Start-Org',
+    'Conflict_Attack', 'Conflict_Demonstrate', 'Contact_Broadcast', 'Contact_Contact',
+    'Contact_Correspondence', 'Contact_Meet', 'Justice_Acquit', 'Justice_Appeal',
+    'Justice_Arrest-Jail', 'Justice_Charge-Indict', 'Justice_Convict', 'Justice_Execute',
+    'Justice_Extradite', 'Justice_Fine', 'Justice_Pardon', 'Justice_Release-Parole',
+    'Justice_Sentence', 'Justice_Sue', 'Justice_Trial-Hearing', 'Life_Beborn', 'Life_Die',
+    'Life_Divorce', 'Life_Injure', 'Life_Marry', 'Manufacture_Artifact',
+    'Movement_Transport-Artifact', 'Movement_Transport-Person', 'Personnel_Elect',
+    'Personnel_End-Position', 'Personnel_Nominate', 'Personnel_Start-Position',
+    'Transaction_Transaction', 'Transaction_Transfer-Money', 'Transaction_Transfer-Ownership'
+]

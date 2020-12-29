@@ -17,6 +17,11 @@ from kbp_2015_utils.constants import SPLIT_TO_DIR, SUBDIR_DICT, SUBDIR_EXT, SPEA
 BERT_RE = re.compile(r'## *')
 NEWLINE_TOKEN = "[NEWL]"
 
+tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+tokenizer.add_special_tokens(
+    # SPEAKER_TAGS are added to final tokenized doc but NEWLINE_TOKEN is only for tracking of new lines.
+    {'additional_special_tokens': [NEWLINE_TOKEN] + SPEAKER_TAGS})
+
 
 class DocumentState(object):
     def __init__(self, key, doc_type):
@@ -33,7 +38,10 @@ class DocumentState(object):
         self.sentence_map = []
         self.segment_info = []
         self.clusters = []
-        # self.num_gold_mentions = 0
+        self.orig_doc = None
+        self.proc_doc = None
+        self.token_idx_to_orig_span_start = None
+        self.token_idx_to_orig_span_end = None
 
     def finalize(self, clusters, ent_id_to_info):
         # populate clusters
@@ -49,7 +57,6 @@ class DocumentState(object):
             if len(cur_cluster):
                 self.clusters.append(cur_cluster)
 
-        all_mentions = flatten(self.clusters)
         sentence_map = get_sentence_map(self.segments, self.sentence_end)
         subtoken_map = flatten(self.segment_subtoken_map)
         # assert len(all_mentions) == len(set(all_mentions))
@@ -63,6 +70,10 @@ class DocumentState(object):
             "clusters": self.clusters,
             'sentence_map': sentence_map,
             "subtoken_map": subtoken_map,
+            "orig_doc": self.orig_doc,
+            "proc_doc": self.proc_doc,
+            "token_idx_to_orig_span_start": self.token_idx_to_orig_span_start,
+            "token_idx_to_orig_span_end": self.token_idx_to_orig_span_end,
         }
 
 
@@ -103,9 +114,15 @@ def get_sentence_map(segments, sentence_end):
     return sent_map
 
 
-def get_document(doc_name, doc_type, tokenized_doc, clusters, ent_id_to_info, segment_len):
-    document_state = DocumentState(doc_name, doc_type)
+def get_document(doc_name, segment_len, info_dict):
+    document_state = DocumentState(doc_name, info_dict["doc_type"])
+    document_state.orig_doc = info_dict["orig_doc"]
+    document_state.proc_doc = info_dict["proc_doc"]
+    document_state.token_idx_to_orig_span_start = info_dict["token_idx_to_orig_span_start"]
+    document_state.token_idx_to_orig_span_end = info_dict["token_idx_to_orig_span_end"]
+
     word_idx = -1
+    tokenized_doc = info_dict["tokenized_doc"]
     for idx, token in enumerate(tokenized_doc):
         if token == NEWLINE_TOKEN:
             # [NEWL] corresponds to "\n" in real doc
@@ -132,240 +149,159 @@ def get_document(doc_name, doc_type, tokenized_doc, clusters, ent_id_to_info, se
 
         document_state.sentence_end.append(False)
         document_state.subtoken_map.append(word_idx)
+
     # Last word in the document is obviously end of sentence
     document_state.sentence_end[-1] = True
     split_into_segments(document_state, segment_len,
                         document_state.sentence_end, document_state.token_end)
-    document = document_state.finalize(clusters, ent_id_to_info)
+    document = document_state.finalize(info_dict["clusters"], info_dict["ent_id_to_info"])
+
     return document
 
 
-def tokenize_span(span, tokenizer, doc_name):
-    span = span.strip()
-    if span == '':
-        return [], 0
-
-    span = span.replace("\n", NEWLINE_TOKEN)
-    newline_count = span.count(NEWLINE_TOKEN)
-
-    tokenized_span = tokenizer.tokenize(span)
-    # if newline_count > 0:
-    #     print(tokenized_span)
-
-    if "[UNK]" in tokenized_span:
-        # Try cleaning the text and reprocess
-        cleaned_span = clean(span, lower=False)
-        tokenized_span = tokenizer.tokenize(cleaned_span)
-        if "[UNK]" in tokenized_span:
-            print(span, tokenized_span, doc_name)
-            sys.exit()
-
-    return tokenized_span, newline_count
-
-
-def read_source_doc(source_file, proc_source_file):
-    doc_str = open(source_file).read()
-    doc_str = doc_str.replace('’', "'")
-
+def read_source_doc(proc_source_file):
     proc_doc = json.loads(open(proc_source_file).read())
-    token_idx_mapping_dict = OrderedDict()
-    for orig_token_idx in range(len(doc_str)):
-        token_idx_mapping_dict[orig_token_idx] = None  # The 0th character corresponds to space
+
+    orig_span_start_to_token_idx = dict()
+    orig_span_end_to_token_idx = dict()
+
+    token_idx_to_orig_span_start = dict()
+    token_idx_to_orig_span_end = dict()
+
+    # token_idx_to_orig_
 
     proc_doc_str = " "
     cur_speaker = None
+    orig_doc_offset = 0
+    tokenized_doc = []
+    newline_counter = 0
+
     for sentence in proc_doc["sentences"]:
         tokens = sentence["tokens"]
         # Verified that each processed sentence has a unique speaker. So the segmentation is fine.
         # We can just append the speaker tag before the start of sentence
         if "speaker" in tokens[0]:
             if cur_speaker != tokens[0]['speaker']:
-                proc_doc_str += f"{SPEAKER_TAGS[0]} {tokens[0]['speaker']} {SPEAKER_TAGS[1]} "
-            cur_speaker = tokens[0]['speaker']
+                cur_speaker = tokens[0]['speaker']
+                speaker_str = f"{SPEAKER_TAGS[0]} {tokens[0]['speaker']} {SPEAKER_TAGS[1]} "
+                proc_doc_str += speaker_str
+
+                speaker_tokens = tokenizer.basic_tokenizer.tokenize(
+                    speaker_str, never_split=tokenizer.all_special_tokens)
+                # Speaker tokens are a modification of original text and don't correspond to
+                # any actual token. Since they don't actually correspond to any mention we can just
+                # set it to some value. Here we just set it current document offset
+                for basic_token in speaker_tokens:
+                    # token_idx_to_orig_span_start[len(tokenized_doc) - newline_counter] = None
+
+                    if basic_token in tokenizer.all_special_tokens:
+                        tokenized_doc.append(basic_token)
+                    else:
+                        for subword_token in tokenizer.wordpiece_tokenizer.tokenize(basic_token):
+                            tokenized_doc.append(subword_token)
+                    # token_idx_to_orig_span_end[len(tokenized_doc) - 1 - newline_counter] = None
 
         for token in tokens:
-            cur_offset = len(proc_doc_str)
-            # orig_offset = token["characterOffsetBegin"]
-            token_text = token["originalText"]
-            for idx, orig_token_idx in enumerate(range(token["characterOffsetBegin"], token["characterOffsetEnd"])):
-                token_idx_mapping_dict[orig_token_idx] = cur_offset + idx
+            token_text = token["word"]
+            basic_tokens = tokenizer.basic_tokenizer.tokenize(token_text)
 
+            # The original span might have spaces in it like "2 1/2" or "(850) 224-7263"
+            # In such cases, the sum won't be equal to parts.
+            # The idea behind this boolean is that in case this sum is equal to part, we can do a finer mapping
+            # of orig_doc_offset_to_token_idx calculation.
+            is_sum_equal_to_part = (len(token_text) == sum([len(basic_token) for basic_token in basic_tokens]))
+            orig_doc_offset = token["characterOffsetBegin"]
+
+            if is_sum_equal_to_part:
+                for basic_token in basic_tokens:
+                    # len(tokenized_doc) because at least a token will be added and that token idx
+                    # corresponds to span start
+                    orig_span_start_to_token_idx[orig_doc_offset] = len(tokenized_doc) - newline_counter
+                    for subword_token in tokenizer.wordpiece_tokenizer.tokenize(basic_token):
+                        tokenized_doc.append(subword_token)
+                    # len(tokenized_doc) - 1 because the index is less than 1
+                    orig_span_end_to_token_idx[orig_doc_offset + len(basic_token)] = (
+                            len(tokenized_doc) - 1 - newline_counter)
+
+                    # More fine-grained original document offsets possible
+                    orig_doc_offset += len(basic_token)
+
+            else:
+                orig_span_start_to_token_idx[orig_doc_offset] = len(tokenized_doc) - newline_counter
+                for basic_token in basic_tokens:
+                    for subword_token in tokenizer.wordpiece_tokenizer.tokenize(basic_token):
+                        tokenized_doc.append(subword_token)
+
+                orig_span_end_to_token_idx[token["characterOffsetEnd"]] = len(tokenized_doc) - newline_counter
+
+            # orig_doc_offset = token["characterOffsetEnd"]
             proc_doc_str += token_text + " "
 
-            # # Map the space character as well
-            # if doc_str[token["characterOffsetEnd"]] == " ":
-            #     token_idx_mapping_dict[token["characterOffsetEnd"]] = len(proc_doc_str) - 1
-
         proc_doc_str += "\n"
-    # print(proc_doc_str)
-    # if "0147" in source_file:
-    #     print(proc_doc_str)
-    return proc_doc_str, token_idx_mapping_dict
+        tokenized_doc.append(NEWLINE_TOKEN)
+        newline_counter += 1
+
+    # Add the reverse entries to token_idx to document offsets
+    for key, value in orig_span_start_to_token_idx.items():
+        token_idx_to_orig_span_start[value] = key
+
+    for key, value in orig_span_end_to_token_idx.items():
+        token_idx_to_orig_span_end[value] = key
+
+    return (proc_doc_str, tokenized_doc, orig_span_start_to_token_idx, orig_span_end_to_token_idx,
+            token_idx_to_orig_span_start, token_idx_to_orig_span_end)
 
 
-def get_doc_span(doc_str, token_idx_mapping_dict, span_start, span_end):
-    doc_span = ""
-    if span_end == -1:
-        mapped_idx = None
-        while span_start in token_idx_mapping_dict:
-            mapped_idx = token_idx_mapping_dict[span_start]
-            if mapped_idx is not None:
-                break
-            span_start += 1
-
-        if mapped_idx is None:
-            raise ValueError(span_start, token_idx_mapping_dict)
-
-        doc_span = doc_str[mapped_idx:]
-        return doc_span.strip()
-
-    else:
-        last_non_trivial_idx = None
-        for char_idx in range(span_start, span_end):
-            mapped_idx = token_idx_mapping_dict[char_idx]
-
-            if mapped_idx is not None:
-                doc_span += doc_str[mapped_idx]
-                last_non_trivial_idx = mapped_idx
-
-        return doc_span.strip(), last_non_trivial_idx
-
-
-def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, tokenizer):
+def tokenize_doc(doc_name, source_file, proc_source_file, ann_file):
     # Read the source document
     orig_doc_str = open(source_file).read()
     orig_doc_str = orig_doc_str.replace("\n", " ")
-    proc_doc_str, token_idx_mapping_dict = read_source_doc(source_file, proc_source_file)
+    # orig_doc_str = orig_doc_str.replace('’', "'")
+
+    proc_doc_str, tokenized_doc, orig_span_start_to_token_idx, orig_span_end_to_token_idx, \
+        token_idx_to_orig_span_start, token_idx_to_orig_span_end = read_source_doc(proc_source_file)
+
+    tokenized_doc_without_newl = [token for token in tokenized_doc if token != NEWLINE_TOKEN]
+
     # Parse the XML
     doc_type, mention_list, clusters = parse_ann_file(ann_file)
     # Sort mentions by their starting and ending point - Priority to starting point
     mention_list = sorted(mention_list, key=lambda x: x[0] + 1e-5 * x[1])
 
-    tokenized_doc = []
-    token_counter = 0
-    char_offset = 0  # Till what point has the document been processed
     ent_id_to_info = OrderedDict()
-    last_non_trivial_idx  = 0
-    real_span_to_tokenized_span = {}
-    char_to_tokenized_idx = {}
+
     for span_start, span_end, mention_info in mention_list:
-        # Tokenize the string before the span and after the last span
-        real_span = tuple([span_start, span_end])
-        if real_span not in real_span_to_tokenized_span:
-            if char_offset > span_start:
-                # Overlapping span
-                doc_span = proc_doc_str[token_idx_mapping_dict[span_start]: token_idx_mapping_dict[span_end - 1] + 1]
-                last_non_trivial_idx = token_idx_mapping_dict[span_end - 1] + 1
+        if span_start in orig_span_start_to_token_idx and span_end in orig_span_end_to_token_idx:
+            start_token_idx = orig_span_start_to_token_idx[span_start]
+            end_token_idx = orig_span_end_to_token_idx[span_end]
+            ent_id_to_info[mention_info["id"]] = tuple([start_token_idx, end_token_idx, mention_info])
 
-                orig_doc_span = orig_doc_str[span_start: span_end]
-                assert (doc_span.replace(" ", "") == orig_doc_span.replace(" ", ""))
-                relv_tokens, _ = tokenize_span(doc_span, tokenizer, doc_name)
-
-                if span_start in char_to_tokenized_idx:
-                    # Part of the span has already been processed!
-                    # Document: "doc-prefix overlap-part" Span: "overlap-part y"
-                    counter_idx, token_idx = char_to_tokenized_idx[span_start]
-                    # Tokenize the remaining part of the span
-                    doc_span, last_non_trivial_idx = get_doc_span(
-                        proc_doc_str, token_idx_mapping_dict, char_offset, span_end)
-                    last_non_trivial_idx += 1
-                    orig_doc_span = orig_doc_str[char_offset: span_end]
-                    try:
-                        assert (doc_span.replace(" ", "") == orig_doc_span.replace(" ", ""))
-                    except AssertionError:
-                        sys.exit()
-
-                    remaining_tokens, newline_count = tokenize_span(doc_span, tokenizer, doc_name)
-                    tokenized_doc.extend(remaining_tokens)
-                    char_offset = span_end
-                    # Don't count newline tokens as they will ultimately be removed.
-                    token_counter += len(remaining_tokens) - newline_count
-                    char_to_tokenized_idx[char_offset] = (token_counter, len(tokenized_doc))
-
-                    ent_id_to_info[mention_info["id"]] = tuple([counter_idx, counter_idx + len(relv_tokens) - 1,
-                                                                mention_info])
-
-                elif span_end in char_to_tokenized_idx:
-                    # The span has already been processed!
-                    # Document: "doc-prefix overlap-part" Span: "overlap-part"
-                    # Just look back in the tokenized doc
-                    token_idx, counter_idx = char_to_tokenized_idx[span_end]
-                    proc_tokens = tokenized_doc[counter_idx - len(relv_tokens): counter_idx]
-
-                    try:
-                        # Tokens corresponding to tokenizing the span standalone and the corresponding tokens in
-                        # the document should be the same
-                        assert(relv_tokens == proc_tokens)
-                    except AssertionError:
-                        print(doc_name, relv_tokens, proc_tokens)
-
-                    ent_id_to_info[mention_info["id"]] = tuple([counter_idx - len(relv_tokens), counter_idx - 1,
-                                                                mention_info])
-                else:
-                    # We are at lord's mercy
-                    print("JESUS")
-                    raise ValueError(doc_name)
-            else:
-                if token_idx_mapping_dict[span_start] is None:
-                    # 3 spans in training and dev had annotations in URL text which were preprocessed out
-                    print("Found None", doc_name, orig_doc_str[span_start: span_end])
-                    # continue
-                    before_span_str, _ = get_doc_span(proc_doc_str, token_idx_mapping_dict, char_offset, span_start)
-                    before_span_tokens, newline_count = tokenize_span(before_span_str, tokenizer, doc_name)
-                    tokenized_doc.extend(before_span_tokens)
-
-                    # Don't count newline tokens as they will ultimately be removed.
-                    token_counter += len(before_span_tokens) - newline_count
-                    char_to_tokenized_idx[span_start] = (token_counter, len(tokenized_doc))
-                    continue
-
-                before_span_str = proc_doc_str[last_non_trivial_idx: token_idx_mapping_dict[span_start]]
-                before_span_tokens, newline_count = tokenize_span(before_span_str, tokenizer, doc_name)
-                tokenized_doc.extend(before_span_tokens)
-
-                # Don't count newline tokens as they will ultimately be removed.
-                token_counter += len(before_span_tokens) - newline_count
-                char_to_tokenized_idx[span_start] = (token_counter, len(tokenized_doc))
-
-                # Tokenize the span
-                doc_span = proc_doc_str[token_idx_mapping_dict[span_start]: token_idx_mapping_dict[span_end - 1] + 1]
-                last_non_trivial_idx = token_idx_mapping_dict[span_end - 1] + 1
-
-                orig_doc_span = orig_doc_str[span_start: span_end]
-                try:
-                    assert (doc_span.replace(" ", "") == orig_doc_span.replace(" ", ""))
-                except AssertionError:
-                    print(doc_name, doc_span, orig_doc_str[span_start: span_end])
-                    continue
-
-                span_tokens, newline_count = tokenize_span(doc_span, tokenizer, doc_name)
-
-                ent_id_to_info[mention_info["id"]] = tuple([
-                        token_counter, token_counter + len(span_tokens) - 1, mention_info])
-
-                real_span_to_tokenized_span[real_span] = tuple(
-                    [token_counter, token_counter + len(span_tokens) - 1])
-
-                tokenized_doc.extend(span_tokens)
-                char_offset = span_end
-                # Don't count newline tokens as they will ultimately be removed.
-                token_counter += len(span_tokens) - newline_count
-                char_to_tokenized_idx[char_offset] = (token_counter, len(tokenized_doc))
+            proc_span = tokenizer.convert_tokens_to_string(tokenized_doc_without_newl[start_token_idx: end_token_idx + 1])
+            orig_span = orig_doc_str[span_start: span_end]
+            try:
+                assert (proc_span.replace(" ", "") == orig_span.replace(" ", ""))
+            except AssertionError:
+                print(f"WARNING: {doc_name} - Proc span: ({proc_span}) is different from  original span ({orig_span})")
+                pass
         else:
-            tokenized_start, tokenized_end = real_span_to_tokenized_span[real_span]
-            ent_id_to_info[mention_info["id"]] = tuple([tokenized_start, tokenized_end, mention_info])
+            if (span_end + 1) in orig_span_end_to_token_idx:
+                # There are some mistakes in training data where instead of marking "responses" they marked "response"
+                ent_id_to_info[mention_info["id"]] = tuple([
+                    orig_span_start_to_token_idx[span_start], orig_span_end_to_token_idx[span_end + 1], mention_info])
+            else:
+                # Some of the spans in URLs were marked which were removed during preprocessing
+                # There are other which are marked in the middle of a pharse - "antiwar" where "war" is marked
+                print(f"{doc_name}: Found no matching token that matches the offset boundary for span "
+                      f"{orig_doc_str[span_start: span_end]} that starts at {span_start} with context"
+                      f"{orig_doc_str[span_start - 10: span_end + 10]}")
 
-    # Add the tokens after the last span
-    rem_doc = proc_doc_str[last_non_trivial_idx:]
-    rem_tokens, newline_count = tokenize_span(rem_doc, tokenizer, doc_name)
-    # Don't count newline tokens as they will ultimately be removed.
-    token_counter += len(rem_tokens) - newline_count
-
-    tokenized_doc.extend(rem_tokens)
-    return doc_type, tokenized_doc, ent_id_to_info, clusters
+    return {"orig_doc": orig_doc_str, "proc_doc": proc_doc_str, "doc_type": doc_type,
+            "token_idx_to_orig_span_start": token_idx_to_orig_span_start,
+            "token_idx_to_orig_span_end": token_idx_to_orig_span_end, "clusters": clusters,
+            "tokenized_doc": tokenized_doc,  "ent_id_to_info": ent_id_to_info}
 
 
-def minimize_partition(args, split, tokenizer, seg_len):
+def minimize_partition(args, split, seg_len):
     split_dir = path.join(args.input_dir, SPLIT_TO_DIR[split])
     source_dir = path.join(split_dir, SUBDIR_DICT["source"])
     ann_dir = path.join(split_dir, SUBDIR_DICT["ann"])
@@ -387,9 +323,9 @@ def minimize_partition(args, split, tokenizer, seg_len):
     with open(output_path, "w") as output_file:
         for doc_name, source_file, proc_source_file, annotation_file in \
                 zip(doc_ids, source_files, proc_source_files, ann_files):
-            doc_type, tokenized_doc, ent_id_to_info, clusters = tokenize_doc(
-                doc_name, source_file, proc_source_file, annotation_file, tokenizer)
-            document = get_document(doc_name, doc_type, tokenized_doc, clusters, ent_id_to_info, seg_len)
+            output_dict = tokenize_doc(
+                doc_name, source_file, proc_source_file, annotation_file)
+            document = get_document(doc_name, seg_len, output_dict)
             output_file.write(json.dumps(document))
             output_file.write("\n")
             count += 1
@@ -397,11 +333,8 @@ def minimize_partition(args, split, tokenizer, seg_len):
 
 
 def minimize_split(args, seg_len):
-    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-    tokenizer.add_special_tokens(
-        {'additional_special_tokens': [NEWLINE_TOKEN] + SPEAKER_TAGS})
     for split in ["dev", "test", "train"]:
-        minimize_partition(args, split, tokenizer, seg_len)
+        minimize_partition(args, split, seg_len)
 
 
 if __name__ == "__main__":

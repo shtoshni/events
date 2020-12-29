@@ -25,6 +25,7 @@ def main():
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
         '-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
+    parser.add_argument('-doc_proc', default='cleaned', choices=['cleaned', 'orig'], type=str)
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
@@ -53,6 +54,8 @@ def main():
                         help='Memory size used in the model')
     parser.add_argument('-mlp_size', default=1000, type=int,
                         help='MLP size used in the model')
+    parser.add_argument('-no_use_doc_type', default=True, dest="use_doc_type", action="store_false",
+                        help="If true, document type is used during clustering.")
     parser.add_argument('-use_srl', default=None, choices=['joint', 'event'], type=str,
                         help="If true, coreference for event would also attend to entities, and vice-versa.")
     parser.add_argument('-no_use_ment_type', default=True, dest="use_ment_type", action="store_false",
@@ -102,7 +105,7 @@ def main():
     imp_opts = ['model_size', 'max_segment_len',
                 'ment_emb', 'ment_ordering',
                 'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
-                'use_srl',  'use_ment_type',  # Clustering params
+                'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
                 'num_train_docs', 'sample_invalid', 'max_training_segments',
                 'over_loss_wt',  "new_ent_wt",  # Training params
@@ -124,7 +127,7 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}')
+    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_proc}')
     print(args.data_dir)
 
     # Get mention model name

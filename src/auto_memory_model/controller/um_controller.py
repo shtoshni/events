@@ -111,14 +111,13 @@ class UnboundedMemController(BaseController):
         """
         pred_mentions, gt_actions, mention_emb_list, mention_score_list = self.get_mention_embs_and_actions(example)
 
-        metadata = {}
         follow_gt = self.training or teacher_forcing
         rand_fl_list = np.random.random(len(mention_emb_list))
         if teacher_forcing:
             rand_fl_list = np.zeros_like(rand_fl_list)
 
         action_prob_list, action_list = self.memory_net(
-            mention_emb_list, mention_score_list, pred_mentions, gt_actions, metadata, rand_fl_list,
+            example, mention_emb_list, mention_score_list, pred_mentions, gt_actions, rand_fl_list,
             teacher_forcing=teacher_forcing)
 
         coref_loss = 0.0

@@ -16,6 +16,7 @@ from coref_utils.metrics import CorefEvaluator
 import pytorch_utils.utils as utils
 from data_utils.utils import get_clusters
 from auto_memory_model.controller.utils import pick_controller
+from kbp_2015_utils.constants import EVENT_SUBTYPES_NAME
 
 
 EPS = 1e-8
@@ -177,9 +178,13 @@ class Experiment:
                         print(f"Weird thing - {total_loss}")
                         return None
 
-                    if torch.isnan(total_loss):
+                    elif total_loss is None:
+                        return None
+
+                    elif torch.isnan(total_loss):
                         print("Loss is NaN")
                         sys.exit()
+
                     # Backprop
                     for key in optimizer:
                         optimizer[key].zero_grad()
@@ -194,6 +199,8 @@ class Experiment:
 
                     return total_loss.item()
 
+                # with torch.autograd.set_detect_anomaly(True):
+                #     print(cur_example["doc_key"])
                 example_loss = handle_example(cur_example)
                 if example_loss is None:
                     continue
@@ -243,6 +250,12 @@ class Experiment:
 
         pred_class_counter, gt_class_counter = defaultdict(int), defaultdict(int)
 
+        if split == "test":
+            span_boundary_to_token_file = path.join(self.data_dir, "test_token.json")
+            span_boundary_to_token_dict = json.loads(open(span_boundary_to_token_file).read())
+            tbf_f = open(path.join(self.model_dir, "hopper.tbf"), "w")
+            mention_counter = 0
+
         with torch.no_grad():
             log_file = path.join(self.model_dir, split + ".log.jsonl")
             with open(log_file, 'w') as log_f:
@@ -267,6 +280,56 @@ class Experiment:
                     total_actions += len(action_list)
 
                     predicted_clusters = action_sequences_to_clusters(action_list, pred_mentions)
+
+                    if split == "test":
+                        doc_key = example['doc_key']
+                        span_boundary_to_token_data = span_boundary_to_token_dict[doc_key]
+                        tbf_f.write(f"#BeginOfDocument {doc_key}\n")
+
+                        token_idx_to_orig_span_start = example["token_idx_to_orig_span_start"]
+                        token_idx_to_orig_span_end = example["token_idx_to_orig_span_end"]
+                        orig_doc_str = example["orig_doc"]
+
+                        coreference_clusters = []
+                        for pred_cluster in predicted_clusters:
+                            coreference_cluster = {}
+                            subtype_count = defaultdict(int)
+                            for (span_start, span_end, event_subtype_idx) in pred_cluster:
+                                if str(span_start) in token_idx_to_orig_span_start and \
+                                        str(span_end) in token_idx_to_orig_span_end:
+                                    orig_span_start = token_idx_to_orig_span_start[str(span_start)]
+                                    orig_span_end = token_idx_to_orig_span_end[str(span_end)]
+
+                                    span_boundary_str = f"{orig_span_start}-{orig_span_end}"
+                                    if span_boundary_str not in span_boundary_to_token_data:
+                                        continue
+                                    orig_token_idx = span_boundary_to_token_data[span_boundary_str]
+
+                                    orig_span_str = orig_doc_str[orig_span_start: orig_span_end]
+                                    event_subtype_name = EVENT_SUBTYPES_NAME[event_subtype_idx]
+                                    # For now putting up any realis
+                                    tbf_f.write(f"brat_conversion\t{doc_key}\tE{mention_counter}\t{orig_token_idx}\t"
+                                                f"{orig_span_str}\t{event_subtype_name}\tActual\n")
+                                    if orig_token_idx in coreference_cluster:
+                                        # We have two spans with the same token in this cluster
+                                        # Prefer the span whose event subtype is more common in the cluster
+                                        earlier_subtype = coreference_cluster[orig_token_idx][1]
+                                        if subtype_count[event_subtype_name] <= subtype_count[earlier_subtype]:
+                                            # Current cluster has more of the
+                                            continue
+
+                                    coreference_cluster[orig_token_idx] = (f"E{mention_counter}", event_subtype_name)
+                                    subtype_count[event_subtype_name] += 1
+                                    mention_counter += 1
+                            if len(coreference_cluster) > 1:
+                                coreference_clusters.append(
+                                    [mention_name for mention_name, _ in list(coreference_cluster.values())])
+
+                        for cluster_idx, coreference_cluster in enumerate(coreference_clusters):
+                            tbf_f.write(f"@Coreference\tC{cluster_idx}\t{','.join(coreference_cluster)}\n")
+
+                        tbf_f.write(f"#EndOfDocument\n")
+
                     predicted_clusters, mention_to_predicted = \
                         get_mention_to_cluster(predicted_clusters, threshold=self.cluster_threshold)
 
@@ -301,7 +364,7 @@ class Experiment:
 
                 # Print individual metrics
                 result_dict = OrderedDict()
-                indv_metrics_list = ['MUC', 'Bcub', 'CEAFE']
+                indv_metrics_list = ['MUC', 'Bcub', 'CEAFE', 'BLANC']
                 perf_str = ""
                 for indv_metric, indv_evaluator in zip(indv_metrics_list, evaluator.evaluators):
                     perf_str += ", " + indv_metric + ": {:.1f}".format(indv_evaluator.get_f1() * 100)
@@ -313,26 +376,6 @@ class Experiment:
                 fscore = evaluator.get_f1() * 100
                 result_dict['fscore'] = round(fscore, 1)
                 logger.info("F-score: %.1f %s" % (fscore, perf_str))
-
-                # Only use CoNLL evaluator script for final evaluation
-                # if final_eval and path.exists(self.conll_scorer) and path.exists(self.conll_data_dir):
-                #     gold_path = path.join(self.conll_data_dir, f'{split}.conll')
-                #     prediction_file = path.join(self.model_dir, f'{split}.conll')
-                #     conll_results = evaluate_conll(
-                #         self.conll_scorer, gold_path, coref_predictions, subtoken_maps, prediction_file)
-                #
-                #     for indv_metric in indv_metrics_list:
-                #         result_dict[indv_metric] = OrderedDict()
-                #         result_dict[indv_metric]['recall'] = round(conll_results[indv_metric.lower()]["r"], 1)
-                #         result_dict[indv_metric]['precision'] = round(conll_results[indv_metric.lower()]["p"], 1)
-                #         result_dict[indv_metric]['fscore'] = round(conll_results[indv_metric.lower()]["f"], 1)
-                #
-                #     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
-                #     result_dict['fscore'] = round(average_f1, 1)
-                #
-                #     logger.info("(CoNLL) F-score : %.1f, MUC: %.1f, Bcub: %.1f, CEAFE: %.1f"
-                #                 % (average_f1, conll_results["muc"]["f"], conll_results['bcub']["f"],
-                #                    conll_results['ceafe']["f"]))
 
                 logger.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
                             (corr_actions / total_actions, oracle_evaluator.get_prf()[2]))
