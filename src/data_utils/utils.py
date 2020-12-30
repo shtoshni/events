@@ -15,8 +15,8 @@ def load_data(data_dir, max_segment_len, dataset='kbp_2015'):
     train_data, dev_data, test_data = all_splits
 
     if dataset == 'kbp_2015':
-        assert(len(train_data) == 128)
-        assert(len(dev_data) >= 30)
+        # assert(len(train_data) == 128)
+        # assert(len(dev_data) >= 30)
         assert(len(test_data) == 202)
 
     return train_data, dev_data, test_data

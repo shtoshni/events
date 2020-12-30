@@ -34,7 +34,7 @@ def main():
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'max', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
     parser.add_argument('-max_span_width',
-                        help='Max span width', default=6, type=int)
+                        help='Max span width', default=4, type=int)
     parser.add_argument('-mlp_depth', default=1, type=int,
                         help='Number of hidden layers in other MLPs')
     parser.add_argument('-mlp_size', default=1000, type=int,

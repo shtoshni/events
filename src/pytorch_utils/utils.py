@@ -11,7 +11,8 @@ def print_model_info(model):
             for dim in dims:
                 local_params *= dim
             total_params += local_params
-            # print(name, param.data.size())
+            if 'bert' not in name:
+                print(name, param.data.size())
     print("\nTotal Params:{:.2f} (in millions)".format(total_params/10**6))
 
 

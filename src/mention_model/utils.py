@@ -9,6 +9,7 @@ def get_mention_model_name(args):
     model_name_suffix += 'emb_' + f'{args.ment_emb}' + '_'
     model_name_suffix += 'type_' + ('spanbert' if args.pretrained_bert_dir else 'bert') + '_'
     model_name_suffix += 'segments_' + f'{args.max_training_segments}' + '_'
+    model_name_suffix += 'width_' + f'{args.max_span_width}' + '_'
 
     # if not args.multitask:
     #     model_name_suffix += 'no_multitask_'

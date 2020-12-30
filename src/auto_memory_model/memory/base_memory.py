@@ -27,7 +27,7 @@ class BaseMemory(nn.Module):
             self.num_feats = 4
 
         self.hsize = hsize
-        self.mem_size = hsize
+        self.mem_size = hsize + emb_size
         self.mlp_size = mlp_size
         self.mlp_depth = mlp_depth
         self.emb_size = emb_size
@@ -46,8 +46,6 @@ class BaseMemory(nn.Module):
 
         self.mem_coref_mlp = MLP(3 * self.mem_size + self.num_feats * self.emb_size, self.mlp_size, 1,
                                  num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
-        self.event_subtype_match_mlp = MLP(2 * self.emb_size, self.mlp_size, 1,
-                                           num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
 
         if self.entity_rep == 'learned_avg':
             self.alpha = MLP(2 * self.mem_size, 300, 1, num_hidden_layers=1, bias=True, drop_module=drop_module)
@@ -58,7 +56,6 @@ class BaseMemory(nn.Module):
         self.ment_dist_embeddings = nn.Embedding(10, self.emb_size)
         self.sent_dist_embeddings = nn.Embedding(10, self.emb_size)
         self.counter_embeddings = nn.Embedding(10, self.emb_size)
-        self.event_subtype_embeddings = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
 
     @staticmethod
     def get_distance_bucket(distances):
@@ -153,21 +150,13 @@ class BaseMemory(nn.Module):
 
         # Event Subtype
         event_type = get_event_type(event_subtype)
-        event_subtype_emb = self.event_subtype_embeddings(torch.tensor(event_subtype).long().cuda())
-        rep_event_subtype = torch.unsqueeze(event_subtype_emb, dim=0).repeat(num_cells, 1)
 
         # Coref Score
         pair_vec = torch.cat([self.mem_vectors, rep_query_vector, self.mem_vectors * rep_query_vector,
                               feature_embs], dim=-1)
         pair_score = self.mem_coref_mlp(pair_vec)
 
-        # Event Subtype Match Score
-        # print(event_subtype)
-        # hadamard_term = self.cluster_subtype_emb * rep_event_subtype
-        subtype_pair_vec = torch.cat([self.cluster_subtype_emb, rep_event_subtype], dim=-1)  #, hadamard_term], dim=-1)
-        subtype_pair_score = self.event_subtype_match_mlp(subtype_pair_vec)
-
-        coref_score = torch.squeeze(pair_score + subtype_pair_score, dim=-1) + ment_score  # M
+        coref_score = torch.squeeze(pair_score, dim=-1) + ment_score  # M
 
         # Event type used for coreference mask
         coref_new_mask = torch.cat([self.get_coref_mask(event_type), torch.tensor([1.0]).cuda()], dim=0)
@@ -176,7 +165,7 @@ class BaseMemory(nn.Module):
         coref_new_not_scores = coref_new_scores * coref_new_mask + (1 - coref_new_mask) * (-1e4)
         return coref_new_not_scores
 
-    def coref_update(self, query_vector, event_subtype_emb, cell_idx, mask, subtype_mask):
+    def coref_update(self, query_vector, cell_idx, mask):
         if self.entity_rep == 'learned_avg':
             alpha_wt = torch.sigmoid(
                 self.alpha(torch.cat([self.mem_vectors[cell_idx, :], query_vector], dim=0)))
@@ -187,9 +176,4 @@ class BaseMemory(nn.Module):
             pool_vec_num = self.mem_vectors * torch.unsqueeze(self.ent_counter, dim=1) + query_vector
             avg_pool_vec = pool_vec_num / total_counts
             self.mem_vectors = self.mem_vectors * (1 - mask) + mask * avg_pool_vec
-
-            pool_subtype_num = self.cluster_subtype_emb * torch.unsqueeze(self.ent_counter, dim=1) + event_subtype_emb
-            avg_subtype_vec = pool_subtype_num / total_counts
-            self.cluster_subtype_emb = self.cluster_subtype_emb * (1 - subtype_mask) + subtype_mask * avg_subtype_vec
-
 

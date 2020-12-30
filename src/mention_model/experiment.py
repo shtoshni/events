@@ -200,10 +200,13 @@ class Experiment:
         dev_examples = self.data_iter_map[split]
         mention_counter = 0
 
-        if final_eval and split == "test":
+        if split == "test":
             span_boundary_to_token_file = path.join(self.data_dir, "test_token.json")
             span_boundary_to_token_dict = json.loads(open(span_boundary_to_token_file).read())
             tbf_f = open(path.join(self.model_dir, "nugget.tbf"), "w")
+
+        log_file = path.join(self.model_dir, split + ".log.jsonl")
+        log_f = open(log_file, "w")
 
         with torch.no_grad():
             # total_gold = defaultdict(float)
@@ -214,15 +217,45 @@ class Experiment:
             for dev_example in dev_examples:
                 preds, y, flat_cand_mask = model(dev_example)
 
-                if final_eval and split == "test":
+                if threshold is not None:
+                    pred_mentions_idx = torch.nonzero((preds >= threshold), as_tuple=False).tolist()
+                    mask_nonzero_idx = torch.squeeze(torch.nonzero(flat_cand_mask, as_tuple=False), dim=1).tolist()
+                    token_idx_to_orig_span_start = dev_example["token_idx_to_orig_span_start"]
+                    token_idx_to_orig_span_end = dev_example["token_idx_to_orig_span_end"]
+
+                    pred_mentions = []
+                    for (flattened_idx, event_subtype_idx) in pred_mentions_idx:
+                        orig_flattened_idx = mask_nonzero_idx[flattened_idx]
+                        token_idx = orig_flattened_idx // max_span_width
+                        num_tokens = orig_flattened_idx % max_span_width
+
+                        pred_mentions.append((token_idx, token_idx + num_tokens, event_subtype_idx))
+
+                    gt_mentions = []
+                    for cluster in dev_example["clusters"]:
+                        for mention in cluster:
+                            span_start, span_end, mention_info = mention
+                            subtype_val = mention_info["subtype_val"]
+                            gt_mentions.append((span_start, span_end, subtype_val))
+
+                    set_gt = set(gt_mentions)
+                    set_pred = set(pred_mentions)
+                    corr_preds = len(set_pred.intersection(set_gt))
+                    prec = corr_preds / (len(set_pred) + 1e-8)
+                    recall = corr_preds / (len(set_gt) + 1e-8)
+
+                    log_example = dict(dev_example)
+                    log_example["pred_mentions"] = pred_mentions
+                    log_example["gt_mentions"] = gt_mentions
+                    log_example["f_score"] = 200 * prec * recall / (prec + recall + 1e-8)
+
+                    log_f.write(json.dumps(log_example) + "\n")
+
+                if split == "test":
                     doc_key = dev_example['doc_key']
                     span_boundary_to_token_data = span_boundary_to_token_dict[doc_key]
                     tbf_f.write(f"#BeginOfDocument {doc_key}\n")
-                    pred_mentions_idx = torch.nonzero((preds >= threshold), as_tuple=False).tolist()
-                    mask_nonzero_idx = torch.squeeze(torch.nonzero(flat_cand_mask, as_tuple=False), dim=1).tolist()
 
-                    token_idx_to_orig_span_start = dev_example["token_idx_to_orig_span_start"]
-                    token_idx_to_orig_span_end = dev_example["token_idx_to_orig_span_end"]
                     orig_doc_str = dev_example["orig_doc"]
 
                     for (flattened_idx, event_subtype_idx) in pred_mentions_idx:
@@ -298,6 +331,7 @@ class Experiment:
 
         if final_eval and split == "test":
             tbf_f.close()
+        log_f.close()
         return max_fscore, threshold
 
     def final_eval(self):

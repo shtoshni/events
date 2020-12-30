@@ -15,7 +15,7 @@ class UnboundedMemController(BaseController):
         self.over_loss_wt = over_loss_wt
 
         self.memory_net = UnboundedMemory(
-            hsize=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
+            hsize=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + self.emb_size,
             drop_module=self.drop_module, **kwargs)
 
         # Set loss functions
@@ -109,7 +109,8 @@ class UnboundedMemController(BaseController):
         """
         Encode a batch of excerpts.
         """
-        pred_mentions, gt_actions, mention_emb_list, mention_score_list = self.get_mention_embs_and_actions(example)
+        ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, mention_score_list =\
+            self.get_mention_embs_and_actions(example)
 
         follow_gt = self.training or teacher_forcing
         rand_fl_list = np.random.random(len(mention_emb_list))
@@ -135,8 +136,10 @@ class UnboundedMemController(BaseController):
                     gt_actions, rand_fl_list, follow_gt)
                 over_loss = self.loss_fn['over'](new_invalid_tens, over_action_indices)
                 loss['over'] = over_loss
+                loss['total'] = (loss['coref'] + loss['over'])
 
-                loss['total'] = (loss['coref'] + self.over_loss_wt * loss['over'])
+                if ment_pred_loss is not None:
+                    loss['total'] += ment_pred_loss
 
             return loss, action_list, pred_mentions, gt_actions
         else:

@@ -35,7 +35,7 @@ def main():
                         help='Max segment length of BERT segments.')
 
     # Mention variables
-    parser.add_argument('-max_span_width', default=6, type=int,
+    parser.add_argument('-max_span_width', default=4, type=int,
                         help='Max span width.')
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
@@ -103,7 +103,7 @@ def main():
     opt_dict = OrderedDict()
     # Only include important options in hash computation
     imp_opts = ['model_size', 'max_segment_len',
-                'ment_emb', 'ment_ordering',
+                'max_span_width', 'ment_emb', 'ment_ordering',
                 'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
                 'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
