@@ -14,6 +14,12 @@ def get_mention_model_name(args):
     # if not args.multitask:
     #     model_name_suffix += 'no_multitask_'
 
+    if args.dropout_rate != 0.5:
+        model_name_suffix += f'drop_{args.dropout_rate}'
+
+    if args.use_local_attention:
+        model_name_suffix += 'local_'
+
     if args.finetune:
         model_name_suffix += 'ft_'  # + f'{args.ft_lr}'
 

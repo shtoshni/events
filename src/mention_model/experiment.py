@@ -90,7 +90,7 @@ class Experiment:
                 self.model.doc_encoder.parameters(), lr=ft_lr, eps=1e-6)
 
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
-                self.optimizer['doc'], num_warmup_steps=len(self.train_examples) * min(5, self.max_epochs),
+                self.optimizer['doc'], num_warmup_steps=round(len(self.train_examples) * 0.1 * self.max_epochs),
                 num_training_steps=self.max_epochs * len(self.train_examples))
 
         self.train_info['epoch'] = 0
@@ -153,10 +153,13 @@ class Experiment:
                         optimizer['doc'].step()
                         scheduler['doc'].step()
 
-                handle_example(cur_example)
+                    return total_loss
+
+                total_loss = handle_example(cur_example)
 
                 if (idx + 1) % 10 == 0:
-                    print("Steps %d, Max memory %.3f" % (idx + 1, (torch.cuda.max_memory_allocated() / (1024 ** 3))))
+                    print(f"Steps {idx + 1}, Loss: {total_loss.item():.2f} "
+                          f"Max memory {(torch.cuda.max_memory_allocated() / (1024 ** 3)):.3f}")
                     torch.cuda.reset_peak_memory_stats()
 
             # Update epochs done
@@ -215,10 +218,13 @@ class Experiment:
             # Output file to write the outputs
             agg_results = {}
             for dev_example in dev_examples:
-                preds, y, flat_cand_mask = model(dev_example)
+                preds, pred_realis, y, flat_cand_mask = model(dev_example)
 
                 if threshold is not None:
-                    pred_mentions_idx = torch.nonzero((preds >= threshold), as_tuple=False).tolist()
+                    nonzero_preds = torch.nonzero((preds >= threshold), as_tuple=False)
+                    pred_mentions_idx = nonzero_preds.tolist()
+                    realis_nonzero = torch.argmax(pred_realis[pred_mentions_idx], dim=1).tolist()
+
                     mask_nonzero_idx = torch.squeeze(torch.nonzero(flat_cand_mask, as_tuple=False), dim=1).tolist()
                     token_idx_to_orig_span_start = dev_example["token_idx_to_orig_span_start"]
                     token_idx_to_orig_span_end = dev_example["token_idx_to_orig_span_end"]
@@ -418,4 +424,3 @@ class Experiment:
         torch.save(save_dict, location)
         logging.info(f"Model saved at: {location}")
 
-        # self.model.to(torch.device('cuda'))

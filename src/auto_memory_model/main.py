@@ -80,6 +80,8 @@ def main():
                         help='Dropout rate')
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.0, type=float)
+    parser.add_argument('-use_local_attention', default=False, action="store_true",
+                        help='Local Attention on top of BERT embeddings.')
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
@@ -102,8 +104,8 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len',
-                'max_span_width', 'ment_emb', 'ment_ordering',
+    imp_opts = ['model_size', 'max_segment_len', 'use_local_attention',
+                'max_span_width', 'ment_emb', # 'ment_ordering',
                 'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
                 'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',

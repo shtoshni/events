@@ -4,7 +4,7 @@ import torch.nn as nn
 from collections import Counter, OrderedDict
 from document_encoder.independent import IndependentDocEncoder
 from pytorch_utils.modules import MLP
-from kbp_2015_utils.constants import EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS
+from kbp_2015_utils.constants import EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS, DOC_TYPES_TO_IDX
 from auto_memory_model.constants import SPANS_TO_LEN_RATIO
 from data_utils.utils import get_clusters
 
@@ -42,12 +42,13 @@ class BaseController(nn.Module):
         self.other.span_width_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
         self.other.span_width_prior_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
         self.other.event_subtype_embeddings = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
+        self.other.doc_type_embeddings = nn.Embedding(len(DOC_TYPES_TO_IDX), self.emb_size)
 
         self.other.mention_mlp = nn.ModuleDict()
 
         for category, category_vals in zip(["event_subtype"], [EVENT_SUBTYPES]):
             self.other.mention_mlp[category] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + self.emb_size,
+                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
                 hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
                 bias=True, drop_module=self.drop_module)
 
@@ -68,7 +69,7 @@ class BaseController(nn.Module):
 
         return width_scores
 
-    def get_span_embeddings(self, encoded_doc, ment_starts, ment_ends, subtoken_map, event_subtype=None):
+    def get_span_embeddings(self, doc_type, encoded_doc, ment_starts, ment_ends, subtoken_map, event_subtype=None):
         span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
 
         # Add span width embeddings
@@ -76,6 +77,10 @@ class BaseController(nn.Module):
                               for (ment_end, ment_start) in zip(ment_ends.tolist(), ment_starts.tolist())]
         span_width_embs = self.other.span_width_embeddings(torch.tensor(span_width_indices).long().cuda())
         span_emb_list.append(span_width_embs)
+
+        # Add doc type embedding
+        doc_type_emb = torch.unsqueeze(self.other.doc_type_embeddings(torch.tensor(doc_type).long().cuda()), dim=0)
+        span_emb_list.append(doc_type_emb.repeat(ment_ends.shape[0], 1))
 
         if event_subtype is not None:
             event_subtype_embs = self.other.event_subtype_embeddings(event_subtype)
@@ -156,7 +161,8 @@ class BaseController(nn.Module):
         num_words = encoded_doc.shape[0]
         ment_pred_loss = None
 
-        span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends, example["subtoken_map"])
+        span_embs = self.get_span_embeddings(example["doc_type"], encoded_doc,
+                                             filt_cand_starts, filt_cand_ends, example["subtoken_map"])
         ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends, example["subtoken_map"])
 
         mention_logits = torch.squeeze(self.other.mention_mlp[category](span_embs), dim=-1)
@@ -214,7 +220,7 @@ class BaseController(nn.Module):
             self.get_pred_mentions(example, encoded_doc)
 
         pred_mentions = list(zip(pred_starts.tolist(), pred_ends.tolist(), pred_ment_type.tolist()))
-        mention_embs = self.get_span_embeddings(encoded_doc, pred_starts, pred_ends,
+        mention_embs = self.get_span_embeddings(example["doc_type"], encoded_doc, pred_starts, pred_ends,
                                                 example["subtoken_map"], event_subtype=pred_ment_type)
         mention_emb_list = torch.unbind(mention_embs, dim=0)
         pred_scores_list = torch.unbind(torch.unsqueeze(pred_scores, dim=1))

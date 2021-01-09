@@ -2,6 +2,7 @@ import torch
 import random
 from pytorch_utils.utils import get_sequence_mask, get_span_mask
 from document_encoder.base_encoder import BaseDocEncoder
+import math
 
 
 class IndependentDocEncoder(BaseDocEncoder):
@@ -49,7 +50,34 @@ class IndependentDocEncoder(BaseDocEncoder):
                        + [self.pad_token] * (max_sent_len - (len(sent) + 2))
                        for sent in sentences]
         doc_tens = torch.tensor(padded_sent).cuda()
-        return doc_tens, sent_len_list
+        return example, doc_tens, sent_len_list
+
+    # @staticmethod
+    def local_self_attention(self, example, encoded_doc):
+        num_tokens = encoded_doc.shape[0]
+        denom = math.sqrt(encoded_doc.shape[1])
+        attention_mask = torch.zeros((num_tokens, num_tokens)).to(encoded_doc.device)
+        sentence_map = example["sentence_map"]
+        sentence_map_tens = torch.tensor(sentence_map).to(encoded_doc.device)
+        min_sent_idx, max_sent_idx = sentence_map[0], sentence_map[-1]
+        for sent_idx in range(min_sent_idx, max_sent_idx + 1):
+            sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
+            attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
+
+            # Add additional attention to neigboring sentence
+            # sent_idx_next = torch.unsqueeze((sentence_map_tens == sent_idx + 1).float(), dim=1)
+            # attention_mask += sent_idx_iden * torch.transpose(sent_idx_next, 0, 1)
+
+        assert (torch.max(attention_mask) == 1.0)
+        # pairwise_sim = torch.matmul(self.proj_query(encoded_doc), self.proj_key(encoded_doc).t())/denom
+        # pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
+        # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), self.proj_val(encoded_doc))
+
+        pairwise_sim = torch.matmul(encoded_doc, encoded_doc.t()) / denom
+        pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
+        encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), encoded_doc)
+
+        return encoded_doc
 
     def truncate_document(self, example):
         sentences = example["sentences"]
@@ -61,6 +89,7 @@ class IndependentDocEncoder(BaseDocEncoder):
             sentences = sentences[sentence_offset: sentence_offset + self.max_training_segments]
             num_words = sum([len(sent) for sent in sentences])
             sentence_map = example["sentence_map"][word_offset: word_offset + num_words]
+            subtoken_map = example["subtoken_map"][word_offset: word_offset + num_words]
 
             clusters = []
             for orig_cluster in example["clusters"]:
@@ -75,10 +104,15 @@ class IndependentDocEncoder(BaseDocEncoder):
             example["sentences"] = sentences
             example["clusters"] = clusters
             example["sentence_map"] = sentence_map
+            example["subtoken_map"] = subtoken_map
 
             return example
         else:
             return example
 
     def forward(self, example):
-        return self.encode_doc(*self.tensorize_example(example))
+        example, doc_tens, sent_len_list = self.tensorize_example(example)
+        encoded_doc = self.encode_doc(doc_tens, sent_len_list)
+        if self.use_local_attention:
+            encoded_doc = self.local_self_attention(example, encoded_doc)
+        return encoded_doc

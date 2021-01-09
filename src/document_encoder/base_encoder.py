@@ -6,7 +6,7 @@ from kbp_2015_utils.constants import SPEAKER_TAGS
 
 class BaseDocEncoder(nn.Module):
     def __init__(self, model_size='base', pretrained_bert_dir=None, finetune=False, max_training_segments=None,
-                 **kwargs):
+                 use_local_attention=False, **kwargs):
         super(BaseDocEncoder, self).__init__()
         self.max_training_segments = max_training_segments
         self.finetune = finetune
@@ -26,6 +26,14 @@ class BaseDocEncoder(nn.Module):
         if finetune:
             self.tokenizer.add_special_tokens({'additional_special_tokens': SPEAKER_TAGS})
             self.bert.resize_token_embeddings(len(self.tokenizer))
+
+        self.use_local_attention = use_local_attention
+
+        # if self.use_local_attention:
+        #     hidden_size = self.bert.config.hidden_size
+        #     self.proj_key = nn.Linear(hidden_size, hidden_size)
+        #     self.proj_query = nn.Linear(hidden_size, hidden_size)
+        #     self.proj_val = nn.Linear(hidden_size, hidden_size)
 
         self.pad_token = 0
 

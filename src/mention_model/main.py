@@ -53,6 +53,8 @@ def main():
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-no_multitask', dest='multitask', default=True, action="store_false",
                         help='Mutlitask learning with event type loss and event realis loss')
+    parser.add_argument('-use_local_attention', default=False, action="store_true",
+                        help='Local Attention on top of BERT embeddings.')
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Initial learning rate",

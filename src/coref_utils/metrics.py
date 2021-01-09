@@ -78,42 +78,50 @@ class BlancEvaluator(object):
         self.wrong_coref = 0
         self.right_non = 0
         self.wrong_non = 0
+        self.total_gold_coref = 0
+        self.total_non_gold_coref = 0
         self.metric = blanc
         self.beta = beta
 
     def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
-        rc, wc, rn, wn = self.metric(predicted, gold)
+        rc, wc, rn, wn, gc, gnc = self.metric(predicted, gold)
 
         self.right_coref += rc
         self.wrong_coref += wc
         self.right_non += rn
         self.wrong_non += wn
 
+        self.total_gold_coref += gc
+        self.total_non_gold_coref += gnc
+
     def get_f1(self):
         beta = self.beta
 
-        rc_recall = self.right_coref / (self.right_coref + self.wrong_non)
+        c_prec, nc_prec = self.get_precision(details=True)
+        c_recall, nc_recall = self.get_recall(details=True)
+
+        fc = (1 + beta * beta) * c_prec * c_recall / (beta * beta * c_prec + c_recall)
+        fnc = (1 + beta * beta) * nc_prec * nc_recall / (beta * beta * nc_prec + nc_recall)
+
+        return (fc + fnc)/2.0
+
+    def get_recall(self, details=False):
+        rc_recall = self.right_coref / self.total_gold_coref
+        rn_recall = self.right_non / self.total_non_gold_coref
+
+        if not details:
+            return (rc_recall + rn_recall) / 2
+        else:
+            return rc_recall, rn_recall
+
+    def get_precision(self, details=False):
         rc_prec = self.right_coref / (self.right_coref + self.wrong_coref)
-
-        fc = (1 + beta * beta) * rc_prec * rc_recall / (beta * beta * rc_prec + rc_recall)
-
-        rn_prec = self.right_non / (self.right_non + self.wrong_non)
-        rn_recall = self.right_non / (self.right_non + self.wrong_coref)
-        fn = (1 + beta * beta) * rn_prec * rn_recall / (beta * beta * rn_prec + rn_recall)
-
-        return (fc + fn) / 2
-
-    def get_recall(self):
-        rc_recall = self.right_coref / (self.right_coref + self.wrong_non)
-        rn_recall = self.right_non / (self.right_non + self.wrong_coref)
-
-        return (rc_recall + rn_recall) / 2
-
-    def get_precision(self):
-        rc_prec = self.right_coref / (self.right_coref + self.wrong_coref)
         rn_prec = self.right_non / (self.right_non + self.wrong_non)
 
-        return (rc_prec + rn_prec) / 2
+        if not details:
+            return (rc_prec + rn_prec) / 2
+        else:
+            return rc_prec, rn_prec
 
     def get_prf(self):
         return self.get_precision(), self.get_recall(), self.get_f1()
@@ -217,7 +225,7 @@ def blanc(predicted, gold):
         else:
             wn += 1
 
-    return rc, wc, rn, wn
+    return rc, wc, rn, wn, len(gold_cl), len(gold_noncl)
 
 
 def lea(clusters, mention_to_gold):

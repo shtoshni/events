@@ -3,21 +3,15 @@ import torch.nn as nn
 
 from auto_memory_model.controller.base_controller import BaseController
 from pytorch_utils.modules import MLP
-from kbp_2015_utils.constants import EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS
+from kbp_2015_utils.constants import EVENT_TYPES, REALIS_VALS
 
 
 class Controller(BaseController):
     def __init__(self,  **kwargs):
         super(Controller, self).__init__(**kwargs)
         for category, category_vals in zip(["event_type", "realis"], [EVENT_TYPES, REALIS_VALS]):
-            # self.other.mention_mlp[category] = nn.Sequential(
-            #     self.ment_proj,
-            #     self.drop_module,
-            #     nn.ReLU(),
-            #     nn.Linear(self.mlp_size, len(category_vals)),
-            # )
             self.other.mention_mlp[category] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + self.emb_size,
+                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
                 hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
                 bias=True, drop_module=self.drop_module)
 
@@ -32,23 +26,12 @@ class Controller(BaseController):
         assert(num_words == sum([len(sentence) for sentence in example["sentences"]]))
 
         filt_cand_starts, filt_cand_ends, flat_cand_mask = self.get_candidate_endpoints(encoded_doc, example)
-        span_embs = self.get_span_embeddings(encoded_doc, filt_cand_starts, filt_cand_ends, example["subtoken_map"])
+        span_embs = self.get_span_embeddings(example["doc_type"], encoded_doc, filt_cand_starts,
+                                             filt_cand_ends, example["subtoken_map"])
 
         filt_gold_mentions = self.get_gold_mentions(example["clusters"], num_words, flat_cand_mask)
         pred_mention_probs = {}
         loss = {}
-
-        ment_pred_loss, mention_logits = self.get_mention_logits_and_loss(
-            example, encoded_doc, filt_cand_starts, filt_cand_ends, flat_cand_mask)
-
-        category = "event_subtype"
-        if self.training:
-            mention_loss = self.mention_loss_fn(mention_logits, filt_gold_mentions[category])
-            total_weight = filt_cand_starts.shape[0]
-
-            loss[category] = mention_loss / total_weight
-        else:
-            pred_mention_probs[category] = torch.sigmoid(mention_logits).detach()
 
         for category in ["event_subtype", "event_type", "realis"]:
             mention_logits = torch.squeeze(self.other.mention_mlp[category](span_embs), dim=-1)
@@ -68,4 +51,5 @@ class Controller(BaseController):
         if self.training:
             return loss
         else:
-            return pred_mention_probs["event_subtype"], filt_gold_mentions["event_subtype"], flat_cand_mask
+            return pred_mention_probs["event_subtype"], pred_mention_probs["realis"], \
+                   filt_gold_mentions["event_subtype"], flat_cand_mask

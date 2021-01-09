@@ -250,11 +250,10 @@ class Experiment:
 
         pred_class_counter, gt_class_counter = defaultdict(int), defaultdict(int)
 
+        tbf_path, tbf_f, mention_counter = None, None, 0
         if split == "test":
-            span_boundary_to_token_file = path.join(self.data_dir, "test_token.json")
-            span_boundary_to_token_dict = json.loads(open(span_boundary_to_token_file).read())
-            tbf_f = open(path.join(self.model_dir, "hopper.tbf"), "w")
-            mention_counter = 0
+            tbf_path = path.join(self.model_dir, "hopper.tbf")
+            tbf_f = open(tbf_path, "w")
 
         with torch.no_grad():
             log_file = path.join(self.model_dir, split + ".log.jsonl")
@@ -283,7 +282,6 @@ class Experiment:
 
                     if split == "test":
                         doc_key = example['doc_key']
-                        span_boundary_to_token_data = span_boundary_to_token_dict[doc_key]
                         tbf_f.write(f"#BeginOfDocument {doc_key}\n")
 
                         token_idx_to_orig_span_start = example["token_idx_to_orig_span_start"]
@@ -300,25 +298,22 @@ class Experiment:
                                     orig_span_start = token_idx_to_orig_span_start[str(span_start)]
                                     orig_span_end = token_idx_to_orig_span_end[str(span_end)]
 
-                                    span_boundary_str = f"{orig_span_start}-{orig_span_end}"
-                                    if span_boundary_str not in span_boundary_to_token_data:
-                                        continue
-                                    orig_token_idx = span_boundary_to_token_data[span_boundary_str]
+                                    span_boundary_str = f"{orig_span_start},{orig_span_end}"
 
                                     orig_span_str = orig_doc_str[orig_span_start: orig_span_end]
                                     event_subtype_name = EVENT_SUBTYPES_NAME[event_subtype_idx]
                                     # For now putting up any realis
-                                    tbf_f.write(f"brat_conversion\t{doc_key}\tE{mention_counter}\t{orig_token_idx}\t"
+                                    tbf_f.write(f"brat_conversion\t{doc_key}\tE{mention_counter}\t{span_boundary_str}\t"
                                                 f"{orig_span_str}\t{event_subtype_name}\tActual\n")
-                                    if orig_token_idx in coreference_cluster:
+                                    if span_boundary_str in coreference_cluster:
                                         # We have two spans with the same token in this cluster
                                         # Prefer the span whose event subtype is more common in the cluster
-                                        earlier_subtype = coreference_cluster[orig_token_idx][1]
+                                        earlier_subtype = coreference_cluster[span_boundary_str][1]
                                         if subtype_count[event_subtype_name] <= subtype_count[earlier_subtype]:
                                             # Current cluster has more of the
                                             continue
 
-                                    coreference_cluster[orig_token_idx] = (f"E{mention_counter}", event_subtype_name)
+                                    coreference_cluster[span_boundary_str] = (f"E{mention_counter}", event_subtype_name)
                                     subtype_count[event_subtype_name] += 1
                                     mention_counter += 1
                             if len(coreference_cluster) > 1:
@@ -358,6 +353,7 @@ class Experiment:
                     log_example["predicted_clusters"] = predicted_clusters
 
                     log_f.write(json.dumps(log_example) + "\n")
+                    # break
 
                 print("Ground Truth Actions:", gt_class_counter)
                 print("Predicted Actions:", pred_class_counter)
@@ -373,13 +369,19 @@ class Experiment:
                     result_dict[indv_metric]['precision'] = round(indv_evaluator.get_precision() * 100, 1)
                     result_dict[indv_metric]['fscore'] = round(indv_evaluator.get_f1() * 100, 1)
 
+                # print(result_dict['BLANC'])
+
                 fscore = evaluator.get_f1() * 100
                 result_dict['fscore'] = round(fscore, 1)
                 logger.info("F-score: %.1f %s" % (fscore, perf_str))
 
                 logger.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
                             (corr_actions / total_actions, oracle_evaluator.get_prf()[2]))
-                logger.info(log_file)
+                if split == "test":
+                    tbf_f.close()
+                    logger.info(tbf_path)
+                else:
+                    logger.info(log_file)
                 logger.handlers[0].flush()
 
         return result_dict
