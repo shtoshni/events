@@ -7,7 +7,7 @@ import torch
 import json
 from collections import defaultdict, OrderedDict
 import numpy as np
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup, AdamW
 
 from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
 from data_utils.utils import load_data
@@ -32,7 +32,8 @@ class Experiment:
                  pretrained_mention_model=None,
                  # Model params
                  focus_group='joint',
-                 seed=0, init_lr=5e-4, ft_lr=2e-5, finetune=False,
+                 seed=0, init_lr=5e-4, ft_lr=2e-5,
+                 finetune=False, adapter_ft=False,
                  max_gradient_norm=1.0,
                  max_epochs=20, max_segment_len=512, eval=False, num_train_docs=None,
                  mem_type='unbounded', no_singletons=False,
@@ -70,6 +71,7 @@ class Experiment:
 
         # Initialize model and training metadata
         self.finetune = finetune
+        self.adapter_ft = adapter_ft
 
         self.model = pick_controller(mem_type=mem_type, focus_group=focus_group, finetune=finetune, **kwargs)
 
@@ -90,15 +92,11 @@ class Experiment:
     def initialize_setup(self, init_lr, ft_lr=5e-5):
         """Initialize model and training info."""
         other_params = []
-        bert_decay_params = []
-        bert_non_decay_params = []
+        bert_params = []
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 if 'bert' in name:
-                    if ('LayerNorm' in name) or ('layer_norm' in name) or ('bias' in name):
-                        bert_non_decay_params.append(param)
-                    else:
-                        bert_decay_params.append(param)
+                    bert_params.append(param)
                 else:
                     other_params.append(param)
 
@@ -110,21 +108,28 @@ class Experiment:
             other_params, lr=init_lr, eps=1e-6)
 
         self.optimizer_params['mem'] = other_params  # Useful in gradient clipping
+        self.optimizer_params['doc'] = bert_params
 
         self.optim_scheduler['mem'] = get_linear_schedule_with_warmup(
                 self.optimizer['mem'], num_warmup_steps=0,
                 num_training_steps=total_steps)
         if self.finetune:
-            self.optimizer['doc'] = torch.optim.AdamW(
-                bert_decay_params, lr=ft_lr, eps=1e-6)
-            self.optimizer['doc'].add_param_group(
-                {"params": bert_non_decay_params, "lr": ft_lr, "weight_decay": 0}
-            )
+            no_decay = ['bias', 'LayerNorm.weight']
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if
+                            not any(nd in n for nd in no_decay)],
+                 'weight_decay': 0.01},
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if any(nd in n for nd in no_decay)],
+                 'weight_decay': 0.0}
+            ]
+            self.optimizer['doc'] = AdamW(optimizer_grouped_parameters, lr=ft_lr, eps=1e-6)
+
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=int(0.1 * total_steps),
                 num_training_steps=total_steps)
 
-            self.optimizer_params['doc'] = bert_decay_params + bert_non_decay_params
+        # elif self.adapter_ft:
+        #     self.model.doc_encoder.bert.add_adapter()
 
         self.train_info['epoch'] = 0
         self.train_info['val_perf'] = 0.0

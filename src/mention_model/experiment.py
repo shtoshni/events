@@ -8,13 +8,13 @@ import numpy as np
 
 from os import path
 from collections import defaultdict, OrderedDict
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup, AdamW
 
 import pytorch_utils.utils as utils
 from mention_model.controller import Controller
 from torch.utils.tensorboard import SummaryWriter
 from data_utils.utils import load_data
-from kbp_2015_utils.constants import EVENT_SUBTYPES_NAME
+from kbp_2015_utils.constants import EVENT_SUBTYPES_NAME, REALIS_VALS
 
 EPS = 1e-8
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
@@ -86,8 +86,15 @@ class Experiment:
                 num_training_steps=self.max_epochs * len(self.train_examples))
 
         if self.finetune:
-            self.optimizer['doc'] = torch.optim.Adam(
-                self.model.doc_encoder.parameters(), lr=ft_lr, eps=1e-6)
+            no_decay = ['bias', 'LayerNorm.weight']
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if not any(nd in n for nd in no_decay)],
+                 'weight_decay': 0.01},
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if any(nd in n for nd in no_decay)],
+                 'weight_decay': 0.0}
+            ]
+
+            self.optimizer['doc'] = AdamW(optimizer_grouped_parameters, lr=ft_lr, eps=1e-6)
 
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=round(len(self.train_examples) * 0.1 * self.max_epochs),
@@ -204,8 +211,6 @@ class Experiment:
         mention_counter = 0
 
         if split == "test":
-            span_boundary_to_token_file = path.join(self.data_dir, "test_token.json")
-            span_boundary_to_token_dict = json.loads(open(span_boundary_to_token_file).read())
             tbf_f = open(path.join(self.model_dir, "nugget.tbf"), "w")
 
         log_file = path.join(self.model_dir, split + ".log.jsonl")
@@ -223,7 +228,7 @@ class Experiment:
                 if threshold is not None:
                     nonzero_preds = torch.nonzero((preds >= threshold), as_tuple=False)
                     pred_mentions_idx = nonzero_preds.tolist()
-                    realis_nonzero = torch.argmax(pred_realis[pred_mentions_idx], dim=1).tolist()
+                    realis_nonzero = torch.argmax(pred_realis[nonzero_preds[:, 0].tolist()], dim=1).tolist()
 
                     mask_nonzero_idx = torch.squeeze(torch.nonzero(flat_cand_mask, as_tuple=False), dim=1).tolist()
                     token_idx_to_orig_span_start = dev_example["token_idx_to_orig_span_start"]
@@ -259,12 +264,11 @@ class Experiment:
 
                 if split == "test":
                     doc_key = dev_example['doc_key']
-                    span_boundary_to_token_data = span_boundary_to_token_dict[doc_key]
                     tbf_f.write(f"#BeginOfDocument {doc_key}\n")
 
                     orig_doc_str = dev_example["orig_doc"]
 
-                    for (flattened_idx, event_subtype_idx) in pred_mentions_idx:
+                    for (flattened_idx, event_subtype_idx), realis_val in zip(pred_mentions_idx, realis_nonzero):
                         orig_flattened_idx = mask_nonzero_idx[flattened_idx]
                         token_idx = orig_flattened_idx // max_span_width
                         num_tokens = orig_flattened_idx % max_span_width
@@ -274,16 +278,13 @@ class Experiment:
                             orig_span_start = token_idx_to_orig_span_start[str(token_idx)]
                             orig_span_end = token_idx_to_orig_span_end[str(token_idx + num_tokens)]
 
-                            span_boundary_str = f"{orig_span_start}-{orig_span_end}"
-                            if span_boundary_str not in span_boundary_to_token_data:
-                                continue
-                            orig_token_idx = span_boundary_to_token_data[span_boundary_str]
+                            span_boundary_str = f"{orig_span_start},{orig_span_end}"
 
                             orig_span_str = orig_doc_str[orig_span_start: orig_span_end]
                             event_subtype_name = EVENT_SUBTYPES_NAME[event_subtype_idx]
 
-                            tbf_f.write(f"brat_conversion\t{doc_key}\tE{mention_counter}\t{orig_token_idx}\t"
-                                        f"{orig_span_str}\t{event_subtype_name}\tActual\n")
+                            tbf_f.write(f"brat_conversion\t{doc_key}\tE{mention_counter}\t{span_boundary_str}\t"
+                                        f"{orig_span_str}\t{event_subtype_name}\t{REALIS_VALS[realis_val]}\n")
                             mention_counter += 1
                     tbf_f.write(f"#EndOfDocument\n")
 

@@ -1,6 +1,6 @@
 import torch.nn as nn
 from os import path
-from transformers import BertModel, BertTokenizer
+from transformers import BertModel, BertTokenizer, AutoModel
 from kbp_2015_utils.constants import SPEAKER_TAGS
 
 
@@ -13,14 +13,14 @@ class BaseDocEncoder(nn.Module):
 
         # Summary Writer
         if pretrained_bert_dir:
-            self.bert = BertModel.from_pretrained(
+            self.bert = AutoModel.from_pretrained(
                 path.join(pretrained_bert_dir, "spanbert_{}".format(model_size)), output_hidden_states=False,
                 # gradient_checkpointing=False
                 gradient_checkpointing=(True if finetune else False)
             )
         else:
             bert_model_name = 'bert-' + model_size + '-cased'
-            self.bert = BertModel.from_pretrained(
+            self.bert = AutoModel.from_pretrained(
                 bert_model_name, output_hidden_states=False, gradient_checkpointing=(True if finetune else False))
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
         if finetune:
@@ -28,12 +28,6 @@ class BaseDocEncoder(nn.Module):
             self.bert.resize_token_embeddings(len(self.tokenizer))
 
         self.use_local_attention = use_local_attention
-
-        # if self.use_local_attention:
-        #     hidden_size = self.bert.config.hidden_size
-        #     self.proj_key = nn.Linear(hidden_size, hidden_size)
-        #     self.proj_query = nn.Linear(hidden_size, hidden_size)
-        #     self.proj_val = nn.Linear(hidden_size, hidden_size)
 
         self.pad_token = 0
 

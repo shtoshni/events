@@ -26,8 +26,9 @@ def main():
     parser.add_argument('-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
     parser.add_argument('-doc_proc', default='cleaned', choices=['cleaned', 'orig'], type=str)
     parser.add_argument('-model_size', default='base', type=str, help='BERT model type')
-    parser.add_argument('-pretrained_bert_dir', default='/home/shtoshni/Research/litbank_coref/resources/', type=str,
+    parser.add_argument('-pretrained_bert_dir', default=None, type=str,
                         help='SpanBERT model location')
+    # '/home/shtoshni/Research/litbank_coref/resources/'
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
 
