@@ -25,12 +25,18 @@ def main():
                         help='Root folder storing model runs', type=str)
     parser.add_argument('-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
     parser.add_argument('-doc_proc', default='cleaned', choices=['cleaned', 'orig'], type=str)
+
+    # Doc encoder
     parser.add_argument('-model_size', default='base', type=str, help='BERT model type')
     parser.add_argument('-pretrained_bert_dir', default=None, type=str,
                         help='SpanBERT model location')
     # '/home/shtoshni/Research/litbank_coref/resources/'
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
+    parser.add_argument('-no_speaker_tags', dest='add_speaker_tags', default=True, action='store_false',
+                        help='Whether to add speaker tags to document or not.')
+    parser.add_argument('-use_local_attention', default=False, action="store_true",
+                        help='Local Attention on top of BERT embeddings.')
 
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'max', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
@@ -54,8 +60,7 @@ def main():
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-no_multitask', dest='multitask', default=True, action="store_false",
                         help='Mutlitask learning with event type loss and event realis loss')
-    parser.add_argument('-use_local_attention', default=False, action="store_true",
-                        help='Local Attention on top of BERT embeddings.')
+
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Initial learning rate",
@@ -81,8 +86,12 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_proc}')
+    suffix = ''
+    if not args.add_speaker_tags:
+        suffix = '_no_speaker'
+    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_proc}{suffix}')
     print(args.data_dir)
+
     # Log directory for Tensorflow Summary
     log_dir = path.join(model_dir, "logs")
     if not path.exists(log_dir):

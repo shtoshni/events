@@ -40,6 +40,7 @@ class DocumentState(object):
         self.clusters = []
         self.orig_doc = None
         self.proc_doc = None
+        self.tokenized_sentences = None
         self.token_idx_to_orig_span_start = None
         self.token_idx_to_orig_span_end = None
 
@@ -67,6 +68,7 @@ class DocumentState(object):
             "doc_key": self.doc_key,
             "doc_type": self.doc_type,
             "sentences": self.segments,
+            "tokenized_sentences": self.tokenized_sentences,
             "clusters": self.clusters,
             'sentence_map': sentence_map,
             "subtoken_map": subtoken_map,
@@ -118,6 +120,7 @@ def get_document(doc_name, segment_len, info_dict):
     document_state = DocumentState(doc_name, info_dict["doc_type"])
     document_state.orig_doc = info_dict["orig_doc"]
     document_state.proc_doc = info_dict["proc_doc"]
+    document_state.tokenized_sentences = info_dict["tokenized_sentences"]
     document_state.token_idx_to_orig_span_start = info_dict["token_idx_to_orig_span_start"]
     document_state.token_idx_to_orig_span_end = info_dict["token_idx_to_orig_span_end"]
 
@@ -159,7 +162,7 @@ def get_document(doc_name, segment_len, info_dict):
     return document
 
 
-def read_source_doc(proc_source_file):
+def read_source_doc(proc_source_file, no_speaker_tags=False):
     proc_doc = json.loads(open(proc_source_file).read())
 
     orig_span_start_to_token_idx = dict()
@@ -168,19 +171,17 @@ def read_source_doc(proc_source_file):
     token_idx_to_orig_span_start = dict()
     token_idx_to_orig_span_end = dict()
 
-    # token_idx_to_orig_
-
     proc_doc_str = " "
     cur_speaker = None
-    orig_doc_offset = 0
     tokenized_doc = []
     newline_counter = 0
+    tokenized_sentences = []
 
     for sentence in proc_doc["sentences"]:
         tokens = sentence["tokens"]
         # Verified that each processed sentence has a unique speaker. So the segmentation is fine.
         # We can just append the speaker tag before the start of sentence
-        if "speaker" in tokens[0]:
+        if "speaker" in tokens[0] and not no_speaker_tags:
             if cur_speaker != tokens[0]['speaker']:
                 cur_speaker = tokens[0]['speaker']
                 speaker_str = f"{SPEAKER_TAGS[0]} {tokens[0]['speaker']} {SPEAKER_TAGS[1]} "
@@ -201,8 +202,12 @@ def read_source_doc(proc_source_file):
                             tokenized_doc.append(subword_token)
                     # token_idx_to_orig_span_end[len(tokenized_doc) - 1 - newline_counter] = None
 
+        new_tokenized_sentence = []
         for token in tokens:
             token_text = token["word"]
+            if (len(token_text) > 1) and (token_text == token_text.upper()):
+                # Word is all caps. Use truecase output instead
+                token_text = token["truecaseText"]
             basic_tokens = tokenizer.basic_tokenizer.tokenize(token_text)
 
             # The original span might have spaces in it like "2 1/2" or "(850) 224-7263"
@@ -216,27 +221,35 @@ def read_source_doc(proc_source_file):
                 for basic_token in basic_tokens:
                     # len(tokenized_doc) because at least a token will be added and that token idx
                     # corresponds to span start
-                    orig_span_start_to_token_idx[orig_doc_offset] = len(tokenized_doc) - newline_counter
+                    start_token_idx = len(tokenized_doc) - newline_counter
+                    orig_span_start_to_token_idx[orig_doc_offset] = start_token_idx
+
                     for subword_token in tokenizer.wordpiece_tokenizer.tokenize(basic_token):
                         tokenized_doc.append(subword_token)
                     # len(tokenized_doc) - 1 because the index is less than 1
-                    orig_span_end_to_token_idx[orig_doc_offset + len(basic_token)] = (
-                            len(tokenized_doc) - 1 - newline_counter)
+                    end_token_idx = len(tokenized_doc) - 1 - newline_counter
+                    orig_span_end_to_token_idx[orig_doc_offset + len(basic_token)] = end_token_idx
 
                     # More fine-grained original document offsets possible
+                    new_tokenized_sentence.append([basic_token, (start_token_idx, end_token_idx)])
                     orig_doc_offset += len(basic_token)
 
             else:
                 orig_span_start_to_token_idx[orig_doc_offset] = len(tokenized_doc) - newline_counter
                 for basic_token in basic_tokens:
+                    start_token_idx = len(tokenized_doc) - newline_counter
                     for subword_token in tokenizer.wordpiece_tokenizer.tokenize(basic_token):
                         tokenized_doc.append(subword_token)
 
-                orig_span_end_to_token_idx[token["characterOffsetEnd"]] = len(tokenized_doc) - newline_counter
+                    end_token_idx = len(tokenized_doc) - 1 - newline_counter
+                    new_tokenized_sentence.append([basic_token, (start_token_idx, end_token_idx)])
+
+                orig_span_end_to_token_idx[token["characterOffsetEnd"]] = len(tokenized_doc) - 1 - newline_counter
 
             # orig_doc_offset = token["characterOffsetEnd"]
             proc_doc_str += token_text + " "
 
+        tokenized_sentences.append(new_tokenized_sentence)
         proc_doc_str += "\n"
         tokenized_doc.append(NEWLINE_TOKEN)
         newline_counter += 1
@@ -248,18 +261,18 @@ def read_source_doc(proc_source_file):
     for key, value in orig_span_end_to_token_idx.items():
         token_idx_to_orig_span_end[value] = key
 
-    return (proc_doc_str, tokenized_doc, orig_span_start_to_token_idx, orig_span_end_to_token_idx,
-            token_idx_to_orig_span_start, token_idx_to_orig_span_end)
+    return (proc_doc_str, tokenized_doc, tokenized_sentences, orig_span_start_to_token_idx,
+            orig_span_end_to_token_idx, token_idx_to_orig_span_start, token_idx_to_orig_span_end)
 
 
-def tokenize_doc(doc_name, source_file, proc_source_file, ann_file):
+def tokenize_doc(doc_name, source_file, proc_source_file, ann_file, no_speaker_tags=False):
     # Read the source document
     orig_doc_str = open(source_file).read()
     orig_doc_str = orig_doc_str.replace("\n", " ")
     # orig_doc_str = orig_doc_str.replace('’', "'")
 
-    proc_doc_str, tokenized_doc, orig_span_start_to_token_idx, orig_span_end_to_token_idx, \
-        token_idx_to_orig_span_start, token_idx_to_orig_span_end = read_source_doc(proc_source_file)
+    proc_doc_str, tokenized_doc, tokenized_sentences, orig_span_start_to_token_idx, orig_span_end_to_token_idx, \
+        token_idx_to_orig_span_start, token_idx_to_orig_span_end = read_source_doc(proc_source_file, no_speaker_tags=no_speaker_tags)
 
     tokenized_doc_without_newl = [token for token in tokenized_doc if token != NEWLINE_TOKEN]
 
@@ -279,7 +292,7 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file):
             proc_span = tokenizer.convert_tokens_to_string(tokenized_doc_without_newl[start_token_idx: end_token_idx + 1])
             orig_span = orig_doc_str[span_start: span_end]
             try:
-                assert (proc_span.replace(" ", "") == orig_span.replace(" ", ""))
+                assert (proc_span.replace(" ", "").lower() == orig_span.replace(" ", "").lower())
             except AssertionError:
                 print(f"WARNING: {doc_name} - Proc span: ({proc_span}) is different from  original span ({orig_span})")
                 pass
@@ -296,6 +309,7 @@ def tokenize_doc(doc_name, source_file, proc_source_file, ann_file):
                       f"{orig_doc_str[span_start - 10: span_end + 10]}")
 
     return {"orig_doc": orig_doc_str, "proc_doc": proc_doc_str, "doc_type": doc_type,
+            "tokenized_sentences": tokenized_sentences,
             "token_idx_to_orig_span_start": token_idx_to_orig_span_start,
             "token_idx_to_orig_span_end": token_idx_to_orig_span_end, "clusters": clusters,
             "tokenized_doc": tokenized_doc,  "ent_id_to_info": ent_id_to_info}
@@ -324,7 +338,7 @@ def minimize_partition(args, split, seg_len):
         for doc_name, source_file, proc_source_file, annotation_file in \
                 zip(doc_ids, source_files, proc_source_files, ann_files):
             output_dict = tokenize_doc(
-                doc_name, source_file, proc_source_file, annotation_file)
+                doc_name, source_file, proc_source_file, annotation_file, no_speaker_tags=args.no_speaker_tags)
             document = get_document(doc_name, seg_len, output_dict)
             output_file.write(json.dumps(document))
             output_file.write("\n")
@@ -344,6 +358,7 @@ if __name__ == "__main__":
     parser.add_argument("input_dir", type=str, help="Input directory root")
     parser.add_argument("proc_dir", type=str, help="Directory root of files processed with CoreNLP")
     parser.add_argument("output_dir", type=str, help="Output directory")
+    parser.add_argument("-no_speaker_tags", action="store_true", default=False, help="Output directory")
 
     parsed_args = parser.parse_args()
 

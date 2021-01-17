@@ -20,6 +20,9 @@ def get_mention_model_name(args):
     if args.use_local_attention:
         model_name_suffix += 'local_'
 
+    if not args.add_speaker_tags:
+        model_name_suffix += 'no_speaker_'
+
     if args.finetune:
         model_name_suffix += 'ft_'  # + f'{args.ft_lr}'
 

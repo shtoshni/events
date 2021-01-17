@@ -33,6 +33,10 @@ def main():
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
+    parser.add_argument('-no_speaker_tags', dest='add_speaker_tags', default=True, action='store_false',
+                        help='Whether to add speaker tags to document or not.')
+    parser.add_argument('-use_local_attention', default=False, action="store_true",
+                        help='Local Attention on top of BERT embeddings.')
 
     # Mention variables
     parser.add_argument('-max_span_width', default=4, type=int,
@@ -80,8 +84,6 @@ def main():
                         help='Dropout rate')
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.0, type=float)
-    parser.add_argument('-use_local_attention', default=False, action="store_true",
-                        help='Local Attention on top of BERT embeddings.')
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
@@ -129,7 +131,10 @@ def main():
     if not path.exists(best_model_dir):
         os.makedirs(best_model_dir)
 
-    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_proc}')
+    suffix = ''
+    if not args.add_speaker_tags:
+        suffix = '_no_speaker'
+    args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_proc}{suffix}')
     print(args.data_dir)
 
     # Get mention model name

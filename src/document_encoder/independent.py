@@ -52,7 +52,6 @@ class IndependentDocEncoder(BaseDocEncoder):
         doc_tens = torch.tensor(padded_sent).cuda()
         return example, doc_tens, sent_len_list
 
-    # @staticmethod
     def local_self_attention(self, example, encoded_doc):
         num_tokens = encoded_doc.shape[0]
         denom = math.sqrt(encoded_doc.shape[1])
@@ -113,6 +112,9 @@ class IndependentDocEncoder(BaseDocEncoder):
     def forward(self, example):
         example, doc_tens, sent_len_list = self.tensorize_example(example)
         encoded_doc = self.encode_doc(doc_tens, sent_len_list)
+
         if self.use_local_attention:
-            encoded_doc = self.local_self_attention(example, encoded_doc)
-        return encoded_doc
+            local_encoded_doc = self.local_self_attention(example, encoded_doc)
+            return torch.cat([encoded_doc, local_encoded_doc], dim=1)
+        else:
+            return encoded_doc
