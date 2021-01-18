@@ -4,9 +4,6 @@ import sys
 import json
 import glob
 from collections import OrderedDict
-import xml.etree.ElementTree as ET
-import truecase
-from cleantext import clean
 
 from os import path
 from transformers import BertTokenizer
