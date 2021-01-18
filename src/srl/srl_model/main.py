@@ -47,9 +47,9 @@ def main():
     # Training params
     parser.add_argument('-num_train_docs', default=None, type=int,
                         help='Number of training docs.')
-    parser.add_argument('-batch_size', default=32, type=int,
-                        help='Batch size.')
-    parser.add_argument('-dropout_rate', default=0.5, type=float,
+    # parser.add_argument('-batch_size', default=32, type=int,
+                        # help='Batch size.')
+    parser.add_argument('-dropout_rate', default=0.0, type=float,
                         help='Dropout rate')
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=5, type=int)

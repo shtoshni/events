@@ -36,22 +36,25 @@ class Controller(nn.Module):
             hidden_size=self.mlp_size, output_size=len(LABELS), num_hidden_layers=1,
             bias=True, drop_module=self.drop_module)
 
-        self.loss_fn = nn.CrossEntropyLoss()
+        self.loss_fn = nn.CrossEntropyLoss(reduction='sum')
 
-    def get_predicate_embedding(self, example, encoded_doc):
+    @staticmethod
+    def get_predicate_embedding(example, encoded_doc):
         start_idx, end_idx = example["start_idx"], example["end_idx"]
         start_pred_embs = encoded_doc[torch.tensor([start_idx[t_idx] for t_idx in example["predicate"]]).cuda()]
         end_pred_embs = encoded_doc[torch.tensor([end_idx[t_idx] for t_idx in example["predicate"]]).cuda()]
 
         return torch.cat([start_pred_embs, end_pred_embs], dim=1)
 
-    def get_token_embedding(self, example, encoded_doc):
+    @staticmethod
+    def get_token_embedding(example, encoded_doc):
         start_embs = encoded_doc[torch.tensor(example["start_idx"]).cuda()]
         end_embs = encoded_doc[torch.tensor(example["end_idx"]).cuda()]
         token_embs = torch.cat([start_embs, end_embs], dim=1)
         return token_embs
 
-    def get_seq_labels(self, example):
+    @staticmethod
+    def get_seq_labels(example):
         label_list = []
         for arg_list in example["args"]:
             labels = [0] * len(example["start_idx"])

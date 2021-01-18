@@ -21,16 +21,12 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 
 class Experiment:
-    def __init__(self, args, data_dir=None, dataset='conll09',
-                 model_dir=None, best_model_dir=None,
+    def __init__(self, args, data_dir=None, model_dir=None, best_model_dir=None,
                  # Model params
-                 seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False,
-                 max_gradient_norm=1.0,
-                 max_epochs=20, max_segment_len=512, eval=False,
-                 num_train_docs=None, multitask=False,
+                 seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False, max_gradient_norm=1.0,
+                 max_epochs=20, eval=False, num_train_docs=None,
                  # Other params
-                 slurm_id=None,
-                 **kwargs):
+                 slurm_id=None, **kwargs):
 
         self.args = args
         self.slurm_id = slurm_id
