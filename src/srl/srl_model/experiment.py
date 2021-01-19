@@ -150,9 +150,8 @@ class Experiment:
 
                 total_loss = handle_example(cur_example)
 
-                if (idx + 1) % 500 == 0:
-                    print(f"Steps {idx + 1}, Loss: {total_loss.item():.2f} "
-                          f"Max memory {(torch.cuda.max_memory_allocated() / (1024 ** 3)):.3f}")
+                if (idx + 1) % 1000 == 0:
+                    logging.info(f"Steps {idx + 1}, Loss: {total_loss.item():.2f}")
                     torch.cuda.reset_peak_memory_stats()
 
             # Update epochs done
@@ -201,13 +200,13 @@ class Experiment:
                 pred_arg_list = model(dev_example)
                 output_dict = dict(dev_example)
                 output_dict['pred_args'] = []
-                for gt_list, pred_list in zip(dev_example["args"], pred_arg_list):
-                    cur_arg_list = [(arg_info[0], arg_info[1]) for arg_info in gt_list]
-                    all_golds += len(cur_arg_list)
-                    all_preds += len(pred_list)
+                gt_arg_list = [(arg_info[0], arg_info[1]) for arg_info in dev_example["args"]]
 
-                    all_corr += len(set(pred_list).intersection(set(cur_arg_list)))
-                    output_dict['pred_args'].append(pred_list)
+                all_golds += len(gt_arg_list)
+                all_preds += len(pred_arg_list)
+
+                all_corr += len(set(pred_arg_list).intersection(set(gt_arg_list)))
+                output_dict['pred_args'] = pred_arg_list
 
                 log_f.write(json.dumps(output_dict) + "\n")
 

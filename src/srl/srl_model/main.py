@@ -41,14 +41,14 @@ def main():
                         type=str, help='If true use an RNN on top of mention embeddings.')
     parser.add_argument('-mlp_depth', default=1, type=int,
                         help='Number of hidden layers in other MLPs')
-    parser.add_argument('-mlp_size', default=1000, type=int,
+    parser.add_argument('-mlp_size', default=200, type=int,
                         help='MLP size used in the model')
 
     # Training params
     parser.add_argument('-num_train_docs', default=None, type=int,
                         help='Number of training docs.')
-    # parser.add_argument('-batch_size', default=32, type=int,
-                        # help='Batch size.')
+    parser.add_argument('-batch_size', default=32, type=int,
+                        help='Batch size.')
     parser.add_argument('-dropout_rate', default=0.0, type=float,
                         help='Dropout rate')
     parser.add_argument('-max_epochs',

@@ -3,6 +3,7 @@ import argparse
 from os import path
 from transformers import BertTokenizer
 from srl.constants import LABELS_TO_IDX
+import copy
 
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
@@ -32,25 +33,28 @@ def convert_sent_dict(sentence):
     # print(sentences)
     tokenized_sentence, subtoken_map = tokenize_sentence(sentences)
 
-    srl_outputs = {
+    common_dict = {
         'sentences': [tokenized_sentence],
         'start_idx': [start_idx for start_idx, end_idx in subtoken_map],
         'end_idx': [end_idx for start_idx, end_idx in subtoken_map],
-        'predicate': [],
+        'predicate': None,
         'args': []
     }
+
+    srl_outputs = []
 
     predicate_idx = 0
     for idx in range(len(sentence)):
         if sentence[idx][12] == 'Y':  # is predicate
-            srl_outputs['predicate'].append(idx)
-            srl_outputs['args'].append([])
+            output_dict = copy.deepcopy(common_dict)
+            output_dict['predicate'] = idx
             for jdx in range(len(sentence)):
                 arg_label = sentence[jdx][14 + predicate_idx]
                 if arg_label in LABELS_TO_IDX:
-                    srl_outputs['args'][-1].append([jdx, LABELS_TO_IDX[arg_label], arg_label,
+                    output_dict['args'].append([jdx, LABELS_TO_IDX[arg_label], arg_label,
                                                     sentence[idx][1], sentence[jdx][1]])
 
+            srl_outputs.append(output_dict)
             predicate_idx += 1
 
     return srl_outputs
@@ -78,8 +82,8 @@ def conll09_to_json(input_file, output_file):
         # print(sentences, len(sentences))
         for idx in range(len(sentences)):
             srl_output = convert_sent_dict(sentences[idx])
-            if len(srl_output["predicate"]) > 0:
-                f.write(json.dumps(srl_output) + '\n')
+            for json_data in srl_output:
+                f.write(json.dumps(json_data) + '\n')
 
 
 def process_split(input_dir, output_dir, split='train'):
