@@ -3,18 +3,19 @@ import torch.nn as nn
 
 from pytorch_utils.modules import MLP
 from srl.constants import LABELS
-from document_encoder.independent import IndependentDocEncoder
+from srl.srl_model_2.encoder import IndependentDocEncoder
 
 
 class Controller(nn.Module):
     def __init__(self, dropout_rate=0.5, ment_emb='endpoint',
-                 mlp_size=1000, dataset='conll09',
+                 mlp_size=1000, emb_size=20, dataset='conll09',
                  **kwargs):
         super(Controller, self).__init__()
         self.dataset = dataset
         self.doc_encoder = IndependentDocEncoder(**kwargs)
 
         self.mlp_size = mlp_size
+        self.emb_size = emb_size
         self.drop_module = nn.Dropout(p=dropout_rate)
         self.ment_emb = ment_emb
         self.ment_emb_to_size_factor = {'attn': 3, 'endpoint': 2, 'max': 1}
@@ -69,6 +70,7 @@ class Controller(nn.Module):
 
         pred_embs = self.get_predicate_embedding(example, encoded_doc)
         token_embs = self.get_token_embedding(example, encoded_doc)
+        seq_labels = self.get_seq_labels(example)
 
         num_tokens = token_embs.shape[0]
         pred_embs = torch.unsqueeze(pred_embs, dim=0).repeat(num_tokens, 1)
@@ -77,26 +79,19 @@ class Controller(nn.Module):
         pairwise_score = self.other.arg_pred_biaffine(pred_embs, token_embs)
         score = unary_score + pairwise_score
 
+        loss = self.loss_fn(score, seq_labels)
+
         if self.training:
-            seq_labels = self.get_seq_labels(example)
-            loss = self.loss_fn(score, seq_labels)
             return loss
         else:
             # L x P
-            score_list = score.tolist()
             token_pred_list = torch.argmax(score, dim=1).tolist()
             argument_list = []
-            arg_dict = {}
+
             for token_idx, arg_pred in enumerate(token_pred_list):
                 if arg_pred != 0:
                     argument_list.append((token_idx, arg_pred))
-                    score = score_list[token_idx][arg_pred]
-                    if (arg_pred in arg_dict) and (score > arg_dict[arg_pred][1]):
-                        arg_dict[arg_pred] = (token_idx, score)
-                    else:
-                        arg_dict[arg_pred] = (token_idx, score)
 
-            argument_list = [(token_idx, arg_pred) for arg_pred, (token_idx, score) in arg_dict.items()]
             return argument_list
 
     def forward2(self, example_list):

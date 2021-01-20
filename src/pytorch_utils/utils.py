@@ -1,7 +1,7 @@
 import torch
 
 
-def print_model_info(model):
+def print_model_info(model, avoid_bert=True):
     """Prints model parameters and their total count"""
     total_params = 0
     for name, param in model.named_parameters():
@@ -13,6 +13,9 @@ def print_model_info(model):
             total_params += local_params
             if 'bert' not in name:
                 print(name, param.data.size())
+            else:
+                if not avoid_bert:
+                    print(name, param.data.size())
     print("\nTotal Params:{:.2f} (in millions)".format(total_params/10**6))
 
 

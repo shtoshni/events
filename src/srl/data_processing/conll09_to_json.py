@@ -6,12 +6,10 @@ from srl.constants import LABELS_TO_IDX
 import copy
 
 
-tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-max_word_len = 0
+bert_tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
 
-def tokenize_sentence(sentence):
-    global max_word_len
+def tokenize_sentence(sentence, tokenizer):
     tokenized_sentence = []
     subtoken_map = []
 
@@ -19,8 +17,6 @@ def tokenize_sentence(sentence):
         tokens = tokenizer.tokenize(word)
         if len(tokens) == 0:
             continue
-        if len(tokens) > max_word_len:
-            max_word_len = len(tokens)
 
         subtoken_map.append((len(tokenized_sentence), len(tokenized_sentence) + len(tokens) - 1))
         tokenized_sentence.extend(tokens)
@@ -31,7 +27,7 @@ def tokenize_sentence(sentence):
 def convert_sent_dict(sentence):
     sentences = [line[1] for line in sentence]
     # print(sentences)
-    tokenized_sentence, subtoken_map = tokenize_sentence(sentences)
+    tokenized_sentence, subtoken_map = tokenize_sentence(sentences, tokenizer=bert_tokenizer)
 
     common_dict = {
         'sentences': [tokenized_sentence],
@@ -106,7 +102,6 @@ def main(args):
     for split in ['train', 'dev', 'test']:
         process_split(args.input_dir, args.output_dir, split=split)
 
-    print("Max word length:", max_word_len)
 
 
 def parse_args():

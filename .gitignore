@@ -7,3 +7,4 @@ models/
 slurm_scripts/
 proc_data/
 EvmEval/
+pretrained_resources/

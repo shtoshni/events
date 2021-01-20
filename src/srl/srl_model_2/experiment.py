@@ -11,11 +11,9 @@ from collections import defaultdict, OrderedDict
 from transformers import get_linear_schedule_with_warmup, AdamW
 
 import pytorch_utils.utils as utils
-from srl.srl_model.controller import Controller
+from srl.srl_model_2.controller import Controller
 from torch.utils.tensorboard import SummaryWriter
-from srl.srl_model.data_utils import load_data
-from srl.constants import LABELS
-from transformers import AdapterType
+from srl.srl_model_2.data_utils import load_data
 
 
 EPS = 1e-8
@@ -25,7 +23,8 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 class Experiment:
     def __init__(self, args, data_dir=None, model_dir=None, best_model_dir=None,
                  # Model params
-                 seed=0, init_lr=1e-3, ft_lr=2e-5, finetune=False, max_gradient_norm=1.0,
+                 seed=0, init_lr=1e-3, ft_lr=2e-5, adapter_lr=1e-4,
+                 finetune=False, max_gradient_norm=1.0,
                  max_epochs=20, eval=False, num_train_docs=None,
                  # Other params
                  slurm_id=None, **kwargs):
@@ -39,7 +38,7 @@ class Experiment:
 
         if num_train_docs is not None:
             self.train_examples = self.train_examples[:num_train_docs]
-        # self.dev_examples = self.train_examples[:50]
+            # self.dev_examples = self.train_examples
 
         self.data_iter_map = {"train": self.train_examples,
                               "valid": self.dev_examples,
@@ -63,9 +62,9 @@ class Experiment:
 
         self.train_info, self.optimizer, self.optim_scheduler = {}, {}, {}
 
-        self.initialize_setup(init_lr=init_lr, ft_lr=ft_lr)
+        self.initialize_setup(init_lr=init_lr, ft_lr=ft_lr, adapter_lr=adapter_lr)
         self.model = self.model.cuda()
-        utils.print_model_info(self.model)
+        utils.print_model_info(self.model, avoid_bert=False)
 
         if not eval:
             self.train(max_epochs=max_epochs, max_gradient_norm=max_gradient_norm)
@@ -73,7 +72,7 @@ class Experiment:
         # Finally evaluate model
         self.final_eval()
 
-    def initialize_setup(self, init_lr, ft_lr=2e-5):
+    def initialize_setup(self, init_lr, ft_lr=2e-5, adapter_lr=1e-4):
         """Initialize model and training info."""
         self.optimizer['other'] = torch.optim.AdamW(
             self.model.other.parameters(), lr=init_lr, eps=1e-6)
@@ -85,9 +84,11 @@ class Experiment:
         if self.finetune:
             no_decay = ['bias', 'LayerNorm.weight']
             optimizer_grouped_parameters = [
-                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if not any(nd in n for nd in no_decay)],
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters()
+                            if (not any(nd in n for nd in no_decay)) and p.requires_grad],
                  'weight_decay': 0.01},
-                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if any(nd in n for nd in no_decay)],
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters()
+                            if (any(nd in n for nd in no_decay)) and p.requires_grad],
                  'weight_decay': 0.0}
             ]
 
@@ -96,6 +97,27 @@ class Experiment:
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=round(len(self.train_examples) * 0.1 * self.max_epochs),
                 num_training_steps=self.max_epochs * len(self.train_examples))
+
+        else:
+            self.model.doc_encoder.bert.train_adapter(["srl"])
+
+            no_decay = ['bias', 'LayerNorm.weight']
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters()
+                            if (not any(nd in n for nd in no_decay)) and p.requires_grad],
+                 'weight_decay': 0.01},
+                {'params': [p for n, p in self.model.doc_encoder.named_parameters()
+                            if (any(nd in n for nd in no_decay)) and p.requires_grad],
+                 'weight_decay': 0.0}
+            ]
+
+            self.optimizer['doc'] = AdamW(optimizer_grouped_parameters, lr=adapter_lr, eps=1e-6)
+
+            self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
+                self.optimizer['doc'], num_warmup_steps=round(len(self.train_examples) * 0.1 * self.max_epochs),
+                num_training_steps=self.max_epochs * len(self.train_examples))
+
+            self.model.doc_encoder.bert.set_active_adapters(["srl"])
 
         self.train_info['epoch'] = 0
         self.train_info['val_perf'] = 0.0
@@ -145,9 +167,9 @@ class Experiment:
                         model.parameters(), max_gradient_norm)
 
                     optimizer['other'].step()
-                    if self.finetune:
-                        optimizer['doc'].step()
-                        scheduler['doc'].step()
+
+                    optimizer['doc'].step()
+                    scheduler['doc'].step()
 
                     return total_loss
 
@@ -261,9 +283,13 @@ class Experiment:
     def load_model(self, location, best_model=False):
         # checkpoint = torch.load(location, map_location=torch.device('cpu'))
         # self.model.load_state_dict(checkpoint['model'], strict=False, map_location=torch.device('cuda'))
-        checkpoint = torch.load(location, map_location=torch.device('cpu'))
-        self.model.load_state_dict(checkpoint['model'], strict=False)
-        self.model.to(torch.device('cuda'))
+        checkpoint = torch.load(location)
+        self.model.other.load_state_dict(checkpoint['model'], strict=False)
+
+        if self.finetune:
+            self.model.doc_encoder.load_state_dict(checkpoint['doc_encoder'], strict=False)
+        else:
+            self.model.doc_encoder.bert.load_adapter(path.dirname(location))
 
         self.train_info = checkpoint['train_info']
         torch.set_rng_state(checkpoint['rng_state'])
@@ -278,23 +304,21 @@ class Experiment:
 
     def save_model(self, location, best_model=False):
         """Save model"""
-        # self.model.to(torch.device('cpu'))
-
-        model_state_dict = OrderedDict(self.model.state_dict())
-        if not self.finetune:
-            for key in self.model.state_dict():
-                if 'bert.' in key:
-                    del model_state_dict[key]
         save_dict = {
             'train_info': self.train_info,
-            'model': model_state_dict,
+            'model': self.model.other.state_dict(),
             'rng_state': torch.get_rng_state(),
             'optimizer': {},
             'scheduler': {},
         }
 
+        if self.finetune:
+            save_dict['doc_encoder'] = self.model.doc_encoder.state_dict()
+        else:
+            self.model.doc_encoder.bert.save_adapter(path.dirname(location), "srl")
+
         if not best_model:
-            param_groups = ['other', 'doc'] if self.finetune else ['other']
+            param_groups = ['other', 'doc']
             for param_group in param_groups:
                 save_dict['optimizer'][param_group] = self.optimizer[param_group].state_dict()
                 save_dict['scheduler'][param_group] = self.optim_scheduler[param_group].state_dict()

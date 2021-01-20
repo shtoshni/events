@@ -33,7 +33,7 @@ def main():
                         help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
-    parser.add_argument('-no_speaker_tags', dest='add_speaker_tags', default=True, action='store_false',
+    parser.add_argument('-add_speaker_tags', default=False, action='store_true',
                         help='Whether to add speaker tags to document or not.')
     parser.add_argument('-use_local_attention', default=False, action="store_true",
                         help='Local Attention on top of BERT embeddings.')
