@@ -52,31 +52,32 @@ class IndependentDocEncoder(BaseDocEncoder):
         doc_tens = torch.tensor(padded_sent).cuda()
         return example, doc_tens, sent_len_list
 
-    def local_self_attention(self, example, encoded_doc):
-        num_tokens = encoded_doc.shape[0]
-        denom = math.sqrt(encoded_doc.shape[1])
-        attention_mask = torch.zeros((num_tokens, num_tokens)).to(encoded_doc.device)
-        sentence_map = example["sentence_map"]
-        sentence_map_tens = torch.tensor(sentence_map).to(encoded_doc.device)
-        min_sent_idx, max_sent_idx = sentence_map[0], sentence_map[-1]
-        for sent_idx in range(min_sent_idx, max_sent_idx + 1):
-            sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
-            attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
-
-            # Add additional attention to neigboring sentence
-            # sent_idx_next = torch.unsqueeze((sentence_map_tens == sent_idx + 1).float(), dim=1)
-            # attention_mask += sent_idx_iden * torch.transpose(sent_idx_next, 0, 1)
-
-        assert (torch.max(attention_mask) == 1.0)
-        # pairwise_sim = torch.matmul(self.proj_query(encoded_doc), self.proj_key(encoded_doc).t())/denom
+    # def local_self_attention(self, example, encoded_doc):
+    #     self.additional_layer
+        # num_tokens = encoded_doc.shape[0]
+        # denom = math.sqrt(encoded_doc.shape[1])
+        # attention_mask = torch.zeros((num_tokens, num_tokens)).to(encoded_doc.device)
+        # sentence_map = example["sentence_map"]
+        # sentence_map_tens = torch.tensor(sentence_map).to(encoded_doc.device)
+        # min_sent_idx, max_sent_idx = sentence_map[0], sentence_map[-1]
+        # for sent_idx in range(min_sent_idx, max_sent_idx + 1):
+        #     sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
+        #     attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
+        #
+        #     # Add additional attention to neigboring sentence
+        #     # sent_idx_next = torch.unsqueeze((sentence_map_tens == sent_idx + 1).float(), dim=1)
+        #     # attention_mask += sent_idx_iden * torch.transpose(sent_idx_next, 0, 1)
+        #
+        # assert (torch.max(attention_mask) == 1.0)
+        # # pairwise_sim = torch.matmul(self.proj_query(encoded_doc), self.proj_key(encoded_doc).t())/denom
+        # # pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
+        # # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), self.proj_val(encoded_doc))
+        #
+        # pairwise_sim = torch.matmul(encoded_doc, encoded_doc.t()) / denom
         # pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
-        # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), self.proj_val(encoded_doc))
-
-        pairwise_sim = torch.matmul(encoded_doc, encoded_doc.t()) / denom
-        pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
-        encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), encoded_doc)
-
-        return encoded_doc
+        # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), encoded_doc)
+        #
+        # return encoded_doc
 
     def truncate_document(self, example):
         sentences = example["sentences"]
@@ -99,6 +100,21 @@ class IndependentDocEncoder(BaseDocEncoder):
 
                 if len(cluster):
                     clusters.append(cluster)
+
+            if self.use_srl:
+                srl_info_list = []
+                for srl_info in example["srl_info"]:
+                    mod_srl_info = []
+                    for boundary in srl_info:
+                        if len(boundary):
+                            arg_start, arg_end = boundary
+                            if arg_end >= word_offset and arg_start < word_offset + num_words:
+                                mod_srl_info.append([arg_start - word_offset, arg_end - word_offset])
+                        else:
+                            mod_srl_info.append([])
+                    srl_info_list.append(mod_srl_info)
+
+                example["srl_info"] = srl_info_list
 
             example["sentences"] = sentences
             example["clusters"] = clusters

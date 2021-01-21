@@ -85,7 +85,7 @@ def main():
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.0, type=float)
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=25, type=int)
+                        help='Maximum number of epochs', default=30, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",

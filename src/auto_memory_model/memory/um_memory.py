@@ -11,6 +11,7 @@ class UnboundedMemory(BaseMemory):
         self.last_mention_idx = torch.zeros(1).long().cuda()
         self.last_sent_idx = torch.zeros(1).long().cuda()
         self.cluster_type = torch.tensor([-1]).cuda()
+        self.last_mention_boundary = []
 
     def initialize_memory(self):
         """Initialize the memory to null with only 1 memory cell to begin with."""
@@ -19,9 +20,10 @@ class UnboundedMemory(BaseMemory):
         self.last_mention_idx = torch.zeros(1).long().cuda()
         self.last_sent_idx = torch.zeros(1).long().cuda()
         self.cluster_type = torch.tensor([-1]).cuda()
+        self.last_mention_boundary = []
 
-    def predict_action(self, query_vector, ment_type, ment_score, feature_embs):
-        coref_new_scores = self.get_coref_new_scores(query_vector, ment_type, ment_score, feature_embs)
+    def predict_action(self, ment_boundary, query_vector, ment_type, ment_score, feature_embs):
+        coref_new_scores = self.get_coref_new_scores(ment_boundary, query_vector, ment_type, ment_score, feature_embs)
 
         # Negate the mention score
         not_a_ment_score = -ment_score
@@ -75,6 +77,7 @@ class UnboundedMemory(BaseMemory):
             feature_embs = self.get_feature_embs(ment_idx, metadata)
             event_type = get_event_type(event_subtype)
             sent_idx = sentence_map[span_start]
+            ment_boundary = (span_start, span_end)
 
             if not (follow_gt and gt_action_str == 'i' and rand_fl_list[ment_idx] > self.sample_invalid):
                 # This part of the code executes in the following cases:
@@ -83,7 +86,7 @@ class UnboundedMemory(BaseMemory):
                 # (c) Training and mention is an invalid mention and randomly sampled float is less than invalid
                 # sampling probability
                 coref_new_scores, overwrite_ign_scores = self.predict_action(
-                    query_vector, event_subtype, ment_score, feature_embs)
+                    ment_boundary, query_vector, event_subtype, ment_score, feature_embs)
 
                 pred_cell_idx, pred_action_str = self.interpret_scores(
                     coref_new_scores, overwrite_ign_scores, first_overwrite)
@@ -111,6 +114,7 @@ class UnboundedMemory(BaseMemory):
                 self.last_mention_idx[0] = ment_idx
                 self.last_sent_idx[0] = sent_idx
                 self.cluster_type[0] = event_type
+                self.last_mention_boundary.append(ment_boundary)
             else:
                 num_ents = self.mem_vectors.shape[0]
                 # Update the memory
@@ -124,6 +128,7 @@ class UnboundedMemory(BaseMemory):
                     self.ent_counter = self.ent_counter + cell_mask
                     self.last_mention_idx[cell_idx] = ment_idx
                     self.last_sent_idx[cell_idx] = sent_idx
+                    self.last_mention_boundary[cell_idx] = ment_boundary
 
                     if self.use_ment_type:
                         assert (event_type == self.cluster_type[cell_idx])
@@ -134,5 +139,6 @@ class UnboundedMemory(BaseMemory):
                     self.last_mention_idx = torch.cat([self.last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
                     self.last_sent_idx = torch.cat([self.last_sent_idx, torch.tensor([sent_idx]).cuda()], dim=0)
                     self.cluster_type = torch.cat([self.cluster_type, torch.tensor([event_type]).cuda()], dim=0)
+                    self.last_mention_boundary.append(ment_boundary)
 
         return action_logit_list, action_list

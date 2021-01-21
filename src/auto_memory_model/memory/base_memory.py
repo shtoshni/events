@@ -90,8 +90,12 @@ class BaseMemory(nn.Module):
         action_emb = self.action_str_to_idx[action_str]
         return self.last_action_emb(torch.tensor(action_emb).cuda())
 
-    def get_coref_mask(self, ment_type):
+    def get_coref_mask(self, ment_boundary, ment_type):
         cell_mask = (self.ent_counter > 0.0).float()
+        for idx, last_ment_boundary in enumerate(self.last_mention_boundary):
+            if tuple(ment_boundary) == tuple(last_ment_boundary):
+                cell_mask[idx] = 0.0
+
         if self.use_ment_type:
             type_mask = (torch.tensor(ment_type).cuda() == self.cluster_type).float().cuda()
             return cell_mask * type_mask
@@ -143,7 +147,7 @@ class BaseMemory(nn.Module):
         feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
         return feature_embs
 
-    def get_coref_new_scores(self, query_vector, event_subtype, ment_score, feature_embs):
+    def get_coref_new_scores(self, ment_boundary, query_vector, event_subtype, ment_score, feature_embs):
         # Repeat the query vector for comparison against all cells
         num_cells = self.mem_vectors.shape[0]
         rep_query_vector = query_vector.repeat(num_cells, 1)  # M x H
@@ -159,7 +163,7 @@ class BaseMemory(nn.Module):
         coref_score = torch.squeeze(pair_score, dim=-1) + ment_score  # M
 
         # Event type used for coreference mask
-        coref_new_mask = torch.cat([self.get_coref_mask(event_type), torch.tensor([1.0]).cuda()], dim=0)
+        coref_new_mask = torch.cat([self.get_coref_mask(ment_boundary, event_type), torch.tensor([1.0]).cuda()], dim=0)
         coref_new_scores = torch.cat(([coref_score, torch.tensor([0.0]).cuda()]), dim=0)
 
         coref_new_not_scores = coref_new_scores * coref_new_mask + (1 - coref_new_mask) * (-1e4)
