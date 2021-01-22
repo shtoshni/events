@@ -9,7 +9,7 @@ import numpy as np
 from os import path
 from collections import defaultdict, OrderedDict
 from transformers import get_linear_schedule_with_warmup, AdamW
-
+from copy import deepcopy
 import pytorch_utils.utils as utils
 from mention_model.controller import Controller
 from torch.utils.tensorboard import SummaryWriter
@@ -78,8 +78,19 @@ class Experiment:
 
     def initialize_setup(self, init_lr, ft_lr=2e-5):
         """Initialize model and training info."""
+        other_params = []
+        bert_params = set(["doc_encoder.bert." + name for name, _ in self.model.doc_encoder.bert.named_parameters()])
+
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if name in bert_params:
+                    continue
+                else:
+                    # print("Hello", name)
+                    other_params.append(param)
+
         self.optimizer['other'] = torch.optim.AdamW(
-            self.model.other.parameters(), lr=init_lr, eps=1e-6)
+            other_params, lr=init_lr, eps=1e-6)
 
         self.optim_scheduler['other'] = get_linear_schedule_with_warmup(
                 self.optimizer['other'], num_warmup_steps=0,
@@ -88,9 +99,9 @@ class Experiment:
         if self.finetune:
             no_decay = ['bias', 'LayerNorm.weight']
             optimizer_grouped_parameters = [
-                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if not any(nd in n for nd in no_decay)],
+                {'params': [p for n, p in self.model.doc_encoder.bert.named_parameters() if not any(nd in n for nd in no_decay)],
                  'weight_decay': 0.01},
-                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if any(nd in n for nd in no_decay)],
+                {'params': [p for n, p in self.model.doc_encoder.bert.named_parameters() if any(nd in n for nd in no_decay)],
                  'weight_decay': 0.0}
             ]
 
@@ -132,7 +143,7 @@ class Experiment:
             for idx, cur_example in enumerate(self.train_examples):
                 def handle_example(train_example):
                     self.train_info['global_steps'] += 1
-                    loss = model(train_example)
+                    loss = model(deepcopy(train_example))
                     if self.multitask:
                         total_loss = sum([loss[loss_type] for loss_type in loss])
                     else:
@@ -156,6 +167,8 @@ class Experiment:
                         model.parameters(), max_gradient_norm)
 
                     optimizer['other'].step()
+                    scheduler['other'].step()
+
                     if self.finetune:
                         optimizer['doc'].step()
                         scheduler['doc'].step()
@@ -173,7 +186,7 @@ class Experiment:
             self.train_info['epoch'] = epoch + 1
             # Validation performance
             fscore, threshold = self.eval_model()
-            scheduler['other'].step(fscore)
+
 
             # Update model if validation performance improves
             if fscore > self.train_info['val_perf']:
@@ -223,7 +236,7 @@ class Experiment:
             # Output file to write the outputs
             agg_results = {}
             for dev_example in dev_examples:
-                preds, pred_realis, y, flat_cand_mask = model(dev_example)
+                preds, pred_realis, y, flat_cand_mask = model(deepcopy(dev_example))
 
                 if threshold is not None:
                     nonzero_preds = torch.nonzero((preds >= threshold), as_tuple=False)

@@ -15,17 +15,18 @@ class BaseController(nn.Module):
                  ment_emb='endpoint', ment_ordering='ment_type',
                  mlp_size=1000, emb_size=20,
                  sample_invalid=1.0, label_smoothing_wt=0.0,
-                 dataset='kbp_2015',  focus_group='both',
+                 dataset='kbp_2015',  focus_group='both', use_srl=False,
                  **kwargs):
         super(BaseController, self).__init__()
         self.dataset = dataset
+        self.use_srl = use_srl
 
         self.ment_ordering = ment_ordering
         self.max_span_width = max_span_width
         self.sample_invalid = sample_invalid
         self.label_smoothing_wt = label_smoothing_wt
 
-        self.doc_encoder = IndependentDocEncoder(**kwargs)
+        self.doc_encoder = IndependentDocEncoder(use_srl=use_srl, **kwargs)
 
         self.hsize = self.doc_encoder.hsize
         self.mlp_size = mlp_size
@@ -215,7 +216,8 @@ class BaseController(nn.Module):
         return ment_pred_loss, topk_starts, topk_ends, topk_scores, topk_ment_type
 
     def get_mention_embs_and_actions(self, example):
-        encoded_doc = self.doc_encoder(example)
+        encoding_outputs = self.doc_encoder(example)
+        encoded_doc = encoding_outputs[0]
         ment_pred_loss, pred_starts, pred_ends, pred_scores, pred_ment_type =\
             self.get_pred_mentions(example, encoded_doc)
 
@@ -230,7 +232,11 @@ class BaseController(nn.Module):
         else:
             clusters = example["clusters"]
         gt_actions = self.get_actions(pred_mentions, clusters)
-        return ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, pred_scores_list
+
+        outputs = (ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, pred_scores_list)
+        if self.use_srl:
+            outputs = outputs + (encoding_outputs[1],)
+        return outputs
 
     def forward(self, example, teacher_forcing=False):
         pass

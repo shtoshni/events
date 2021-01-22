@@ -17,7 +17,7 @@ class BaseDocEncoder(nn.Module):
         if pretrained_bert_dir:
             model_name = path.join(pretrained_bert_dir, "spanbert_{}".format(model_size))
         else:
-            model_name = 'bert-' + model_size + '-cased'
+            model_name = 'spanbert-' + model_size + '-cased'
 
         self.bert = AutoModel.from_pretrained(
             model_name, output_hidden_states=False, gradient_checkpointing=(True if finetune else False))
@@ -51,5 +51,5 @@ class BaseDocEncoder(nn.Module):
 
         bert_hidden_size = self.bert.config.hidden_size
         self.hsize = bert_hidden_size
-        if self.use_local_attention:
+        if self.use_local_attention or self.use_srl:
             self.hsize = 2 * self.hsize

@@ -25,7 +25,7 @@ def main():
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
         '-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
-    parser.add_argument('-doc_proc', default='cleaned', choices=['cleaned', 'orig'], type=str)
+    parser.add_argument('-doc_proc', default='srl', choices=['srl', 'cleaned', 'orig'], type=str)
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
@@ -60,8 +60,8 @@ def main():
                         help='MLP size used in the model')
     parser.add_argument('-no_use_doc_type', default=True, dest="use_doc_type", action="store_false",
                         help="If true, document type is used during clustering.")
-    parser.add_argument('-use_srl', default=None, choices=['joint', 'event'], type=str,
-                        help="If true, coreference for event would also attend to entities, and vice-versa.")
+    parser.add_argument('-use_srl', default=False, action="store_true",
+                        help='Use SRL guided attention.')
     parser.add_argument('-no_use_ment_type', default=True, dest="use_ment_type", action="store_false",
                         help="If true, mentions are only merged with clusters of the same mention type.")
     parser.add_argument('-entity_rep', default='wt_avg', type=str,
@@ -85,7 +85,7 @@ def main():
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.0, type=float)
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=30, type=int)
+                        help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",
@@ -132,8 +132,8 @@ def main():
         os.makedirs(best_model_dir)
 
     suffix = ''
-    if not args.add_speaker_tags:
-        suffix = '_no_speaker'
+    if args.add_speaker_tags:
+        suffix = '_speaker'
     args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_proc}{suffix}')
     print(args.data_dir)
 

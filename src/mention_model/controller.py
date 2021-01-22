@@ -21,7 +21,8 @@ class Controller(BaseController):
         """
         Encode a batch of excerpts.
         """
-        encoded_doc = self.doc_encoder(example)
+        output = self.doc_encoder(example)
+        encoded_doc = output[0]
         num_words = encoded_doc.shape[0]
         assert(num_words == sum([len(sentence) for sentence in example["sentences"]]))
 
@@ -45,6 +46,8 @@ class Controller(BaseController):
                 total_weight = filt_cand_starts.shape[0]
 
                 loss[category] = mention_loss / total_weight
+                if self.doc_encoder.use_srl:
+                    loss['srl'] = output[1]
             else:
                 pred_mention_probs[category] = torch.sigmoid(mention_logits).detach()
 

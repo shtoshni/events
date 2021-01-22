@@ -8,7 +8,7 @@ import json
 from collections import defaultdict, OrderedDict
 import numpy as np
 from transformers import get_linear_schedule_with_warmup, AdamW
-
+from copy import deepcopy
 from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
 from data_utils.utils import load_data
 from coref_utils.utils import get_mention_to_cluster
@@ -92,44 +92,37 @@ class Experiment:
     def initialize_setup(self, init_lr, ft_lr=5e-5):
         """Initialize model and training info."""
         other_params = []
-        bert_params = []
+        bert_params = set(["doc_encoder.bert." + name for name, _ in self.model.doc_encoder.bert.named_parameters()])
+
         for name, param in self.model.named_parameters():
             if param.requires_grad:
-                if 'bert' in name:
-                    bert_params.append(param)
+                if name in bert_params:
+                    continue
                 else:
                     other_params.append(param)
 
-        # print(len(bert_non_decay_params))
-        # print(len(bert_decay_params))
         total_steps = self.max_epochs * len(self.train_examples)
 
         self.optimizer['mem'] = torch.optim.AdamW(
             other_params, lr=init_lr, eps=1e-6)
-
-        self.optimizer_params['mem'] = other_params  # Useful in gradient clipping
-        self.optimizer_params['doc'] = bert_params
-
+        # self.optimizer_params['mem'] = other_params  # Useful in gradient clipping
         self.optim_scheduler['mem'] = get_linear_schedule_with_warmup(
                 self.optimizer['mem'], num_warmup_steps=0,
                 num_training_steps=total_steps)
         if self.finetune:
             no_decay = ['bias', 'LayerNorm.weight']
             optimizer_grouped_parameters = [
-                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if
-                            not any(nd in n for nd in no_decay)],
+                {'params': [p for n, p in self.model.named_parameters()
+                            if (not any(nd in n for nd in no_decay)) and ("doc_encoder.bert" in n)],
                  'weight_decay': 0.01},
-                {'params': [p for n, p in self.model.doc_encoder.named_parameters() if any(nd in n for nd in no_decay)],
+                {'params': [p for n, p in self.model.named_parameters()
+                            if any(nd in n for nd in no_decay) and ("doc_encoder.bert" in n)],
                  'weight_decay': 0.0}
             ]
             self.optimizer['doc'] = AdamW(optimizer_grouped_parameters, lr=ft_lr, eps=1e-6)
-
             self.optim_scheduler['doc'] = get_linear_schedule_with_warmup(
                 self.optimizer['doc'], num_warmup_steps=int(0.1 * total_steps),
                 num_training_steps=total_steps)
-
-        # elif self.adapter_ft:
-        #     self.model.doc_encoder.bert.add_adapter()
 
         self.train_info['epoch'] = 0
         self.train_info['val_perf'] = 0.0
@@ -170,7 +163,7 @@ class Experiment:
             for cur_example in self.train_examples:
                 def handle_example(example):
                     self.train_info['global_steps'] += 1
-                    output = model(example)
+                    output = model(deepcopy(example))
                     if output is None:
                         return None
                     loss = output[0]
@@ -195,17 +188,16 @@ class Experiment:
                         optimizer[key].zero_grad()
 
                     total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_gradient_norm)
 
                     for key in optimizer:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.optimizer_params[key], max_norm=max_gradient_norm)
+                        # torch.nn.utils.clip_grad_norm_(
+                        #     self.optimizer_params[key], max_norm=max_gradient_norm)
                         optimizer[key].step()
                         scheduler[key].step()
 
                     return total_loss.item()
 
-                # with torch.autograd.set_detect_anomaly(True):
-                #     print(cur_example["doc_key"])
                 example_loss = handle_example(cur_example)
                 if example_loss is None:
                     continue
@@ -273,7 +265,7 @@ class Experiment:
                 coref_predictions, subtoken_maps = {}, {}
 
                 for example in data_iter:
-                    loss, action_list, pred_mentions, gt_actions = model(example)
+                    loss, action_list, pred_mentions, gt_actions = model(deepcopy(example))
                     for pred_action, gt_action in zip(action_list, gt_actions):
                         pred_class_counter[pred_action[1]] += 1
                         gt_class_counter[gt_action[1]] += 1

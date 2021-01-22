@@ -109,8 +109,8 @@ class UnboundedMemController(BaseController):
         """
         Encode a batch of excerpts.
         """
-        ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, mention_score_list =\
-            self.get_mention_embs_and_actions(example)
+        outputs = self.get_mention_embs_and_actions(example)
+        ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, mention_score_list = outputs[:5]
 
         follow_gt = self.training or teacher_forcing
         rand_fl_list = np.random.random(len(mention_emb_list))
@@ -140,6 +140,9 @@ class UnboundedMemController(BaseController):
 
                 if ment_pred_loss is not None:
                     loss['total'] += ment_pred_loss
+
+                if self.doc_encoder.use_srl:
+                    loss['total'] += outputs[5]
 
             return loss, action_list, pred_mentions, gt_actions
         else:

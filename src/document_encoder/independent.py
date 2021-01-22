@@ -3,13 +3,14 @@ import random
 from pytorch_utils.utils import get_sequence_mask, get_span_mask
 from document_encoder.base_encoder import BaseDocEncoder
 import math
+from srl.constants import LABELS
 
 
 class IndependentDocEncoder(BaseDocEncoder):
     def __init__(self, **kwargs):
         super(IndependentDocEncoder, self).__init__(**kwargs)
 
-    def encode_doc(self, document, text_length_list):
+    def encode_doc(self, example, document, text_length_list):
         """
         Encode chunks of a document.
         batch_excerpt: C x L where C is number of chunks padded upto max length of L
@@ -33,13 +34,41 @@ class IndependentDocEncoder(BaseDocEncoder):
                 # Remove CLS and SEP from token embeddings
                 encoded_repr[i, 1:text_length_list[i] - 1, :])
 
+        loss = 0.0
+        weight = 0.0
+        arg_output = []
+        if self.use_srl:
+            for encoded_window, gt_attn_map in zip(unpadded_encoded_output, example["srl_attention_map"]):
+                window_output = self.additional_layer(
+                    torch.unsqueeze(encoded_window, dim=0), output_attentions=True)
+
+                arg_output.append(torch.squeeze(window_output[0], dim=0))
+                # print(window_output[0].shape)
+                attention = window_output[1]
+                attention = torch.squeeze(attention, dim=0)
+
+                loss += torch.norm((attention - gt_attn_map) * (gt_attn_map > 0).float(), p='fro')
+                weight += torch.sum(gt_attn_map)
+
+            print(loss/weight)
+            arg_output = torch.cat(arg_output, dim=0)
+
         encoded_output = torch.cat(unpadded_encoded_output, dim=0)
-        encoded_output = encoded_output
-        return encoded_output
+        # print(encoded_output.shape)
+
+        if self.use_srl:
+            return (torch.cat([encoded_output, arg_output], dim=-1), loss/weight)
+            # return (encoded_output)
+
+        return (encoded_output, )
 
     def tensorize_example(self, example):
         if self.training and self.max_training_segments is not None:
             example = self.truncate_document(example)
+
+        if self.use_srl:
+            example["srl_attention_map"] = self.construct_srl_attention_map(example)
+
         sentences = example["sentences"]
         sent_len_list = [(len(sent) + 2) for sent in sentences]
 
@@ -52,32 +81,64 @@ class IndependentDocEncoder(BaseDocEncoder):
         doc_tens = torch.tensor(padded_sent).cuda()
         return example, doc_tens, sent_len_list
 
-    # def local_self_attention(self, example, encoded_doc):
-    #     self.additional_layer
-        # num_tokens = encoded_doc.shape[0]
-        # denom = math.sqrt(encoded_doc.shape[1])
-        # attention_mask = torch.zeros((num_tokens, num_tokens)).to(encoded_doc.device)
-        # sentence_map = example["sentence_map"]
-        # sentence_map_tens = torch.tensor(sentence_map).to(encoded_doc.device)
-        # min_sent_idx, max_sent_idx = sentence_map[0], sentence_map[-1]
-        # for sent_idx in range(min_sent_idx, max_sent_idx + 1):
-        #     sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
-        #     attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
-        #
-        #     # Add additional attention to neigboring sentence
-        #     # sent_idx_next = torch.unsqueeze((sentence_map_tens == sent_idx + 1).float(), dim=1)
-        #     # attention_mask += sent_idx_iden * torch.transpose(sent_idx_next, 0, 1)
-        #
-        # assert (torch.max(attention_mask) == 1.0)
-        # # pairwise_sim = torch.matmul(self.proj_query(encoded_doc), self.proj_key(encoded_doc).t())/denom
-        # # pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
-        # # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), self.proj_val(encoded_doc))
-        #
-        # pairwise_sim = torch.matmul(encoded_doc, encoded_doc.t()) / denom
+    def local_self_attention(self, example, encoded_doc):
+        self.additional_layer
+        num_tokens = encoded_doc.shape[0]
+        denom = math.sqrt(encoded_doc.shape[1])
+        attention_mask = torch.zeros((num_tokens, num_tokens)).to(encoded_doc.device)
+        sentence_map = example["sentence_map"]
+        sentence_map_tens = torch.tensor(sentence_map).to(encoded_doc.device)
+        min_sent_idx, max_sent_idx = sentence_map[0], sentence_map[-1]
+        for sent_idx in range(min_sent_idx, max_sent_idx + 1):
+            sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
+            attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
+
+            # Add additional attention to neigboring sentence
+            # sent_idx_next = torch.unsqueeze((sentence_map_tens == sent_idx + 1).float(), dim=1)
+            # attention_mask += sent_idx_iden * torch.transpose(sent_idx_next, 0, 1)
+
+        assert (torch.max(attention_mask) == 1.0)
+        # pairwise_sim = torch.matmul(self.proj_query(encoded_doc), self.proj_key(encoded_doc).t())/denom
         # pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
-        # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), encoded_doc)
-        #
-        # return encoded_doc
+        # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), self.proj_val(encoded_doc))
+
+        pairwise_sim = torch.matmul(encoded_doc, encoded_doc.t()) / denom
+        pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
+        encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), encoded_doc)
+
+        return encoded_doc
+
+    def construct_srl_attention_map(self, example):
+        attention_maps_list = []
+        doc_offset = 0
+        for sent_idx, sentence in enumerate(example["sentences"]):
+            sent_attention_maps = []
+            for label_idx in range(1, len(LABELS)):
+                attn_map = torch.zeros(len(sentence), len(sentence)).cuda()
+                key = str(label_idx)
+                if key in example["srl_info"]:
+                    pred_arg_list = example["srl_info"][key]
+                    for pred_arg_info in pred_arg_list:
+                        if pred_arg_info[4] == sent_idx:
+                            pred_start, pred_end, arg_start, arg_end = pred_arg_info[:4]
+                            arg_len = arg_end - arg_start + 1
+                            for pred_idx in range(pred_start, pred_end + 1):
+                                for arg_idx in range(arg_start, arg_end + 1):
+                                    try:
+                                        attn_map[pred_idx - doc_offset, arg_idx - doc_offset] = 1.0/arg_len
+                                    except IndexError:
+                                        import sys
+                                        sys.exit()
+                sent_attention_maps.append(attn_map)
+
+            # Sentence processed
+            doc_offset += len(sentence)
+            sent_attn_map = torch.stack(sent_attention_maps, dim=0)
+            # print(sent_attn_map.shape)
+            attention_maps_list.append(sent_attn_map)
+
+        return attention_maps_list
+
 
     def truncate_document(self, example):
         sentences = example["sentences"]
@@ -102,19 +163,21 @@ class IndependentDocEncoder(BaseDocEncoder):
                     clusters.append(cluster)
 
             if self.use_srl:
-                srl_info_list = []
-                for srl_info in example["srl_info"]:
-                    mod_srl_info = []
-                    for boundary in srl_info:
-                        if len(boundary):
-                            arg_start, arg_end = boundary
-                            if arg_end >= word_offset and arg_start < word_offset + num_words:
-                                mod_srl_info.append([arg_start - word_offset, arg_end - word_offset])
-                        else:
-                            mod_srl_info.append([])
-                    srl_info_list.append(mod_srl_info)
+                srl_info_dict = {}
+                for key, pred_arg_list in example["srl_info"].items():
+                    mod_pred_arg_list = []
+                    for boundary in pred_arg_list:
+                        pred_start, pred_end, arg_start, arg_end = boundary[:4]
+                        if arg_end >= word_offset and arg_start < word_offset + num_words:
+                            if pred_end >= word_offset and pred_start < word_offset + num_words:
+                                mod_pred_arg_list.append([
+                                    pred_start - word_offset, pred_end - word_offset,
+                                    arg_start - word_offset, arg_end - word_offset, boundary[4] - sentence_offset])
 
-                example["srl_info"] = srl_info_list
+                    if len(mod_pred_arg_list):
+                        srl_info_dict[key] = mod_pred_arg_list
+
+                example["srl_info"] = srl_info_dict
 
             example["sentences"] = sentences
             example["clusters"] = clusters
@@ -127,10 +190,11 @@ class IndependentDocEncoder(BaseDocEncoder):
 
     def forward(self, example):
         example, doc_tens, sent_len_list = self.tensorize_example(example)
-        encoded_doc = self.encode_doc(doc_tens, sent_len_list)
+        output = self.encode_doc(example, doc_tens, sent_len_list)
 
-        if self.use_local_attention:
-            local_encoded_doc = self.local_self_attention(example, encoded_doc)
-            return torch.cat([encoded_doc, local_encoded_doc], dim=1)
-        else:
-            return encoded_doc
+        return output
+        # if self.use_local_attention:
+        #     local_encoded_doc = self.local_self_attention(example, encoded_doc)
+        #     return torch.cat([encoded_doc, local_encoded_doc], dim=1)
+        # else:
+        #     return encoded_doc

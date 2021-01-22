@@ -7,6 +7,15 @@ from srl.inference.inference import Inference
 from srl.constants import LABELS
 
 
+def get_sentence_idx(doc_offsets, span_boundary):
+    for sent_idx, (sentence_start, sentence_end) in enumerate(doc_offsets):
+        span_start, span_end = span_boundary
+        if span_start >= sentence_start and span_end <= sentence_end:
+            return sent_idx
+
+    return None
+
+
 def process_split(srl_model, input_dir, output_dir, split="dev"):
     input_file = path.join(input_dir, f"{split}.512.jsonlines")
     output_file = path.join(output_dir, f"{split}.512.jsonlines")
@@ -20,8 +29,12 @@ def process_split(srl_model, input_dir, output_dir, split="dev"):
             #     continue
             instance = json.loads(line.strip())
             doc = []
+            doc_offsets = []
+            offset = 0
             for sentence in instance["sentences"]:
                 doc.extend(sentence)
+                doc_offsets.append((offset, offset + len(sentence) - 1))
+                offset += len(sentence)
 
             srl_info_dict = defaultdict(list)
 
@@ -47,7 +60,14 @@ def process_split(srl_model, input_dir, output_dir, split="dev"):
                             # srl_info[0] = offsets[token_idx]
                             for arg_info in arg_list:
                                 t_idx, arg_idx = arg_info[:2]
-                                srl_info_dict[arg_idx].append((*offset, *offsets[t_idx]))
+                                pred_sent_idx = get_sentence_idx(doc_offsets, offset)
+                                arg_sent_idx = get_sentence_idx(doc_offsets, offsets[t_idx])
+
+                                assert (pred_sent_idx is not None)
+                                assert (arg_sent_idx is not None)
+                                assert (pred_sent_idx == arg_sent_idx)
+
+                                srl_info_dict[arg_idx].append((*offset, *offsets[t_idx], pred_sent_idx))
 
                             # srl_info_list.append(srl_info)
 

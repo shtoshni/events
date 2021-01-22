@@ -24,19 +24,20 @@ def main():
                         default='/home/shtoshni/Research/events/models',
                         help='Root folder storing model runs', type=str)
     parser.add_argument('-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
-    parser.add_argument('-doc_proc', default='cleaned', choices=['cleaned', 'orig'], type=str)
+    parser.add_argument('-doc_proc', default='srl', choices=['cleaned', 'orig', 'srl'], type=str)
 
     # Doc encoder
     parser.add_argument('-model_size', default='base', type=str, help='BERT model type')
-    parser.add_argument('-pretrained_bert_dir', default=None, type=str,
-                        help='SpanBERT model location')
-    # '/home/shtoshni/Research/litbank_coref/resources/'
+    parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/events/pretrained_resources",
+                        type=str, help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
     parser.add_argument('-add_speaker_tags', default=False, action='store_true',
                         help='Whether to add speaker tags to document or not.')
     parser.add_argument('-use_local_attention', default=False, action="store_true",
                         help='Local Attention on top of BERT embeddings.')
+    parser.add_argument('-use_srl', default=False, action="store_true",
+                        help='Use SRL guided attention.')
 
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'max', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
@@ -87,8 +88,8 @@ def main():
         os.makedirs(best_model_dir)
 
     suffix = ''
-    if not args.add_speaker_tags:
-        suffix = '_no_speaker'
+    if args.add_speaker_tags:
+        suffix = '_speaker'
     args.data_dir = path.join(args.base_data_dir, f'{args.dataset}/{args.doc_proc}{suffix}')
     print(args.data_dir)
 
