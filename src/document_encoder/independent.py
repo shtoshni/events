@@ -38,29 +38,27 @@ class IndependentDocEncoder(BaseDocEncoder):
         weight = 0.0
         arg_output = []
         if self.use_srl:
-            for encoded_window, gt_attn_map in zip(unpadded_encoded_output, example["srl_attention_map"]):
+            for encoded_window, gt_attn_map, attention_mask in zip(
+                    unpadded_encoded_output, example["srl_attention_map"], example["local_attention_mask"]):
                 window_output = self.additional_layer(
-                    torch.unsqueeze(encoded_window, dim=0), output_attentions=True)
+                    torch.unsqueeze(encoded_window, dim=0), output_attentions=True, attention_mask=attention_mask)
 
                 arg_output.append(torch.squeeze(window_output[0], dim=0))
-                # print(window_output[0].shape)
                 attention = window_output[1]
                 attention = torch.squeeze(attention, dim=0)
 
                 loss += torch.norm((attention - gt_attn_map) * (gt_attn_map > 0).float(), p='fro')
                 weight += torch.sum(gt_attn_map)
 
-            print(loss/weight)
+            # print(loss/weight)
             arg_output = torch.cat(arg_output, dim=0)
 
         encoded_output = torch.cat(unpadded_encoded_output, dim=0)
-        # print(encoded_output.shape)
 
         if self.use_srl:
             return (torch.cat([encoded_output, arg_output], dim=-1), loss/weight)
-            # return (encoded_output)
 
-        return (encoded_output, )
+        return (encoded_output,)
 
     def tensorize_example(self, example):
         if self.training and self.max_training_segments is not None:
@@ -68,6 +66,9 @@ class IndependentDocEncoder(BaseDocEncoder):
 
         if self.use_srl:
             example["srl_attention_map"] = self.construct_srl_attention_map(example)
+
+        if self.use_srl or self.use_local_attention:
+            example["local_attention_mask"] = self.local_attention_mask(example)
 
         sentences = example["sentences"]
         sent_len_list = [(len(sent) + 2) for sent in sentences]
@@ -82,7 +83,6 @@ class IndependentDocEncoder(BaseDocEncoder):
         return example, doc_tens, sent_len_list
 
     def local_self_attention(self, example, encoded_doc):
-        self.additional_layer
         num_tokens = encoded_doc.shape[0]
         denom = math.sqrt(encoded_doc.shape[1])
         attention_mask = torch.zeros((num_tokens, num_tokens)).to(encoded_doc.device)
@@ -108,7 +108,26 @@ class IndependentDocEncoder(BaseDocEncoder):
 
         return encoded_doc
 
-    def construct_srl_attention_map(self, example):
+    @staticmethod
+    def local_attention_mask(example):
+        attention_mask_list = []
+        doc_offset = 0
+        for window_idx, sentence in enumerate(example["sentences"]):
+            attention_mask = torch.zeros(len(sentence), len(sentence)).cuda()
+            subtoken_map = example["subtoken_map"][doc_offset: doc_offset + len(sentence)]
+            sentence_map_tens = torch.tensor(subtoken_map).cuda()
+            min_sent_idx, max_sent_idx = subtoken_map[0], subtoken_map[-1]
+            for sent_idx in range(min_sent_idx, max_sent_idx + 1):
+                sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
+                attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
+
+            attention_mask_list.append(attention_mask)
+            doc_offset += len(sentence)
+
+        return attention_mask_list
+
+    @staticmethod
+    def construct_srl_attention_map(example):
         attention_maps_list = []
         doc_offset = 0
         for sent_idx, sentence in enumerate(example["sentences"]):
@@ -138,7 +157,6 @@ class IndependentDocEncoder(BaseDocEncoder):
             attention_maps_list.append(sent_attn_map)
 
         return attention_maps_list
-
 
     def truncate_document(self, example):
         sentences = example["sentences"]

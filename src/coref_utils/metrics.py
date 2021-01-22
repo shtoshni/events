@@ -115,8 +115,8 @@ class BlancEvaluator(object):
             return rc_recall, rn_recall
 
     def get_precision(self, details=False):
-        rc_prec = self.right_coref / (self.right_coref + self.wrong_coref)
-        rn_prec = self.right_non / (self.right_non + self.wrong_non)
+        rc_prec = self.right_coref / (self.right_coref + self.wrong_coref + 1e-8)
+        rn_prec = self.right_non / (self.right_non + self.wrong_non + 1e-8)
 
         if not details:
             return (rc_prec + rn_prec) / 2
