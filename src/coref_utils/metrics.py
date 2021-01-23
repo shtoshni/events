@@ -100,8 +100,15 @@ class BlancEvaluator(object):
         c_prec, nc_prec = self.get_precision(details=True)
         c_recall, nc_recall = self.get_recall(details=True)
 
-        fc = (1 + beta * beta) * c_prec * c_recall / (beta * beta * c_prec + c_recall)
-        fnc = (1 + beta * beta) * nc_prec * nc_recall / (beta * beta * nc_prec + nc_recall)
+        if c_prec + c_recall > 0.0:
+            fc = (1 + beta * beta) * c_prec * c_recall / (beta * beta * c_prec + c_recall)
+        else:
+            fc = 0.0
+
+        if nc_prec + nc_recall > 0.0:
+            fnc = (1 + beta * beta) * nc_prec * nc_recall / (beta * beta * nc_prec + nc_recall)
+        else:
+            fnc = 0.0
 
         return (fc + fnc)/2.0
 

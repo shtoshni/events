@@ -41,6 +41,7 @@ class Experiment:
                  slurm_id=None, **kwargs):
 
         self.args = args
+        self.model_args = vars(args)
 
         # Set dataset
         self.dataset = args.dataset
@@ -444,6 +445,7 @@ class Experiment:
             'np_rng_state': np.random.get_state(),
             'optimizer': {},
             'scheduler': {},
+            'model_args': self.model_args,
         }
         if model_type != 'best':
             param_groups = ['mem', 'doc'] if self.finetune else ['mem']

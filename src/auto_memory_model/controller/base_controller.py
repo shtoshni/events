@@ -227,11 +227,12 @@ class BaseController(nn.Module):
         mention_emb_list = torch.unbind(mention_embs, dim=0)
         pred_scores_list = torch.unbind(torch.unsqueeze(pred_scores, dim=1))
 
-        if self.dataset == "kbp_2015":
+        if "clusters" in example:
             clusters = get_clusters(example["clusters"], key="subtype_val")
+            gt_actions = self.get_actions(pred_mentions, clusters)
         else:
-            clusters = example["clusters"]
-        gt_actions = self.get_actions(pred_mentions, clusters)
+            # Used during inference outside standard train/test eval
+            gt_actions = [(-1, 'i')] * len(pred_mentions)
 
         outputs = (ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, pred_scores_list)
         if self.use_srl:

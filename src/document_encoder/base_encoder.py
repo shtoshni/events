@@ -14,10 +14,10 @@ class BaseDocEncoder(nn.Module):
         self.use_srl = use_srl
 
         # Summary Writer
-        if pretrained_bert_dir:
-            model_name = path.join(pretrained_bert_dir, "spanbert_{}".format(model_size))
+        if pretrained_bert_dir == 'spanbert':
+            model_name = f'SpanBERT/spanbert-{model_size}-cased'
         else:
-            model_name = 'spanbert-' + model_size + '-cased'
+            model_name = f'bert-{model_size}-cased'
 
         self.bert = AutoModel.from_pretrained(
             model_name, output_hidden_states=False, gradient_checkpointing=(True if finetune else False))

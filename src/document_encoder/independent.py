@@ -11,14 +11,8 @@ class IndependentDocEncoder(BaseDocEncoder):
         super(IndependentDocEncoder, self).__init__(**kwargs)
 
     def encode_doc(self, example, document, text_length_list):
-        """
-        Encode chunks of a document.
-        batch_excerpt: C x L where C is number of chunks padded upto max length of L
-        text_length_list: list of length of chunks (length C)
-        """
         num_chunks = len(text_length_list)
         attn_mask = get_sequence_mask(torch.tensor(text_length_list).cuda()).cuda().float()
-        # attn_mask = attn_mask.clone().detach().requires_grad_(True)
 
         if not self.finetune:
             with torch.no_grad():
@@ -27,17 +21,19 @@ class IndependentDocEncoder(BaseDocEncoder):
             outputs = self.bert(document, attention_mask=attn_mask)  # C x L x E
 
         encoded_repr = outputs[0]
-
         unpadded_encoded_output = []
         for i in range(num_chunks):
             unpadded_encoded_output.append(
                 # Remove CLS and SEP from token embeddings
                 encoded_repr[i, 1:text_length_list[i] - 1, :])
 
-        loss = 0.0
-        weight = 0.0
-        arg_output = []
+        encoded_output = torch.cat(unpadded_encoded_output, dim=0)
+        output = (encoded_output,)
+
         if self.use_srl:
+            loss, weight = 0.0, 0.0
+            arg_output = []
+
             for encoded_window, gt_attn_map, attention_mask in zip(
                     unpadded_encoded_output, example["srl_attention_map"], example["local_attention_mask"]):
                 window_output = self.additional_layer(
@@ -52,13 +48,9 @@ class IndependentDocEncoder(BaseDocEncoder):
 
             # print(loss/weight)
             arg_output = torch.cat(arg_output, dim=0)
+            return output + (arg_output, loss/weight,)
 
-        encoded_output = torch.cat(unpadded_encoded_output, dim=0)
-
-        if self.use_srl:
-            return (torch.cat([encoded_output, arg_output], dim=-1), loss/weight)
-
-        return (encoded_output,)
+        return output
 
     def tensorize_example(self, example):
         if self.training and self.max_training_segments is not None:
@@ -81,32 +73,6 @@ class IndependentDocEncoder(BaseDocEncoder):
                        for sent in sentences]
         doc_tens = torch.tensor(padded_sent).cuda()
         return example, doc_tens, sent_len_list
-
-    def local_self_attention(self, example, encoded_doc):
-        num_tokens = encoded_doc.shape[0]
-        denom = math.sqrt(encoded_doc.shape[1])
-        attention_mask = torch.zeros((num_tokens, num_tokens)).to(encoded_doc.device)
-        sentence_map = example["sentence_map"]
-        sentence_map_tens = torch.tensor(sentence_map).to(encoded_doc.device)
-        min_sent_idx, max_sent_idx = sentence_map[0], sentence_map[-1]
-        for sent_idx in range(min_sent_idx, max_sent_idx + 1):
-            sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
-            attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
-
-            # Add additional attention to neigboring sentence
-            # sent_idx_next = torch.unsqueeze((sentence_map_tens == sent_idx + 1).float(), dim=1)
-            # attention_mask += sent_idx_iden * torch.transpose(sent_idx_next, 0, 1)
-
-        assert (torch.max(attention_mask) == 1.0)
-        # pairwise_sim = torch.matmul(self.proj_query(encoded_doc), self.proj_key(encoded_doc).t())/denom
-        # pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
-        # encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), self.proj_val(encoded_doc))
-
-        pairwise_sim = torch.matmul(encoded_doc, encoded_doc.t()) / denom
-        pairwise_sim = pairwise_sim * attention_mask + (1 - attention_mask) * (-1e10)
-        encoded_doc = torch.matmul(torch.softmax(pairwise_sim, dim=1), encoded_doc)
-
-        return encoded_doc
 
     @staticmethod
     def local_attention_mask(example):
@@ -211,8 +177,3 @@ class IndependentDocEncoder(BaseDocEncoder):
         output = self.encode_doc(example, doc_tens, sent_len_list)
 
         return output
-        # if self.use_local_attention:
-        #     local_encoded_doc = self.local_self_attention(example, encoded_doc)
-        #     return torch.cat([encoded_doc, local_encoded_doc], dim=1)
-        # else:
-        #     return encoded_doc
