@@ -61,6 +61,8 @@ def main():
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-no_multitask', dest='multitask', default=True, action="store_false",
                         help='Mutlitask learning with event type loss and event realis loss')
+    parser.add_argument('-srl_loss_wt', help="SRL loss wt",
+                        default=1.0, type=float)
 
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)

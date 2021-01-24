@@ -84,6 +84,9 @@ def main():
                         help='Dropout rate')
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.0, type=float)
+    parser.add_argument('-srl_loss_wt', help="SRL loss wt",
+                        default=1.0, type=float)
+
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,

@@ -142,7 +142,7 @@ class UnboundedMemController(BaseController):
                     loss['total'] += ment_pred_loss
 
                 if self.doc_encoder.use_srl:
-                    loss['total'] += outputs[5]
+                    loss['total'] += self.srl_loss_wt * outputs[5]
 
             return loss, action_list, pred_mentions, gt_actions
         else:

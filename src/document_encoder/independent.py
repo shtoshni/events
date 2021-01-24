@@ -30,25 +30,43 @@ class IndependentDocEncoder(BaseDocEncoder):
         encoded_output = torch.cat(unpadded_encoded_output, dim=0)
         output = (encoded_output,)
 
-        if self.use_srl:
+        if self.use_srl or self.use_local_attention:
             loss, weight = 0.0, 0.0
             arg_output = []
 
-            for encoded_window, gt_attn_map, attention_mask in zip(
-                    unpadded_encoded_output, example["srl_attention_map"], example["local_attention_mask"]):
+            for idx, (encoded_window, attention_mask) in enumerate(zip(
+                    unpadded_encoded_output, example["local_attention_mask"])):
+                # Detach the output of BERT
                 window_output = self.additional_layer(
-                    torch.unsqueeze(encoded_window, dim=0), output_attentions=True, attention_mask=attention_mask)
+                    torch.unsqueeze(encoded_window, dim=0),
+                    output_attentions=True, attention_mask=torch.unsqueeze(attention_mask, dim=0))
 
                 arg_output.append(torch.squeeze(window_output[0], dim=0))
-                attention = window_output[1]
-                attention = torch.squeeze(attention, dim=0)
 
-                loss += torch.norm((attention - gt_attn_map) * (gt_attn_map > 0).float(), p='fro')
-                weight += torch.sum(gt_attn_map)
+                if self.use_srl:
+                    gt_attn_map = example["srl_attention_map"][idx]
+                    attention = window_output[1]
+                    attention = torch.squeeze(attention, dim=0)[:6]
+                    # print(torch.sum())
+
+                    # term = torch.log(torch.sum(attention * gt_attn_map, dim=-1) + 1e-8) * torch.sum(gt_attn_map, dim=-1)
+                    # loss -= torch.sum(term)
+                    attention = attention/(torch.sum(attention, dim=-1, keepdim=True) + 1e-10)
+                    # print(attention.shape)
+                    loss -= torch.sum((torch.log(attention + 1e-10) - torch.log(gt_attn_map + 1e-10)) * gt_attn_map)
+
+                    # loss += torch.norm((attention - gt_attn_map) * (gt_attn_map > 0).float(), p='fro') ** 2
+                    weight += torch.sum(gt_attn_map)
 
             # print(loss/weight)
-            arg_output = torch.cat(arg_output, dim=0)
-            return output + (arg_output, loss/weight,)
+            arg_output = self.layer_norm(torch.cat(arg_output, dim=0) + encoded_output)
+            output = (arg_output,)
+
+            # return output + (arg_output, loss/weight,)
+            # arg_output = torch.cat(arg_output, dim=0)
+            # output = (torch.cat([encoded_output, arg_output], dim=-1),)
+            if self.use_srl:
+                output = output + (loss / weight,)
 
         return output
 
@@ -80,14 +98,14 @@ class IndependentDocEncoder(BaseDocEncoder):
         doc_offset = 0
         for window_idx, sentence in enumerate(example["sentences"]):
             attention_mask = torch.zeros(len(sentence), len(sentence)).cuda()
-            subtoken_map = example["subtoken_map"][doc_offset: doc_offset + len(sentence)]
-            sentence_map_tens = torch.tensor(subtoken_map).cuda()
-            min_sent_idx, max_sent_idx = subtoken_map[0], subtoken_map[-1]
+            sentence_map = example["sentence_map"][doc_offset: doc_offset + len(sentence)]
+            sentence_map_tens = torch.tensor(sentence_map).cuda()
+            min_sent_idx, max_sent_idx = sentence_map[0], sentence_map[-1]
             for sent_idx in range(min_sent_idx, max_sent_idx + 1):
                 sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
                 attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
 
-            attention_mask_list.append(attention_mask)
+            attention_mask_list.append((1 - attention_mask) * -1e4)
             doc_offset += len(sentence)
 
         return attention_mask_list

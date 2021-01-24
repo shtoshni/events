@@ -7,8 +7,9 @@ from kbp_2015_utils.constants import EVENT_TYPES, REALIS_VALS
 
 
 class Controller(BaseController):
-    def __init__(self,  **kwargs):
+    def __init__(self,  srl_loss_wt=1.0, **kwargs):
         super(Controller, self).__init__(**kwargs)
+        self.srl_loss_wt = srl_loss_wt
         for category, category_vals in zip(["event_type", "realis"], [EVENT_TYPES, REALIS_VALS]):
             self.other.mention_mlp[category] = MLP(
                 input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
@@ -47,7 +48,7 @@ class Controller(BaseController):
 
                 loss[category] = mention_loss / total_weight
                 if self.doc_encoder.use_srl:
-                    loss['srl'] = output[1]
+                    loss['srl'] = output[-1] * self.srl_loss_wt
             else:
                 pred_mention_probs[category] = torch.sigmoid(mention_logits).detach()
 

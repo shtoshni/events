@@ -15,11 +15,12 @@ class BaseController(nn.Module):
                  ment_emb='endpoint', ment_ordering='ment_type',
                  mlp_size=1000, emb_size=20,
                  sample_invalid=1.0, label_smoothing_wt=0.0,
-                 dataset='kbp_2015',  focus_group='both', use_srl=False,
+                 dataset='kbp_2015',  focus_group='both', use_srl=False, srl_loss_wt=1.0,
                  **kwargs):
         super(BaseController, self).__init__()
         self.dataset = dataset
         self.use_srl = use_srl
+        self.srl_loss_wt = srl_loss_wt
 
         self.ment_ordering = ment_ordering
         self.max_span_width = max_span_width

@@ -68,7 +68,7 @@ class Experiment:
 
         self.initialize_setup(init_lr=init_lr, ft_lr=ft_lr)
         self.model = self.model.cuda()
-        utils.print_model_info(self.model)
+        # utils.print_model_info(self.model)
 
         if not eval:
             self.train(max_epochs=max_epochs, max_gradient_norm=max_gradient_norm)
@@ -173,20 +173,20 @@ class Experiment:
                         optimizer['doc'].step()
                         scheduler['doc'].step()
 
-                    return total_loss
+                    return total_loss, loss
 
-                total_loss = handle_example(cur_example)
+                total_loss, loss_dict = handle_example(cur_example)
 
                 if (idx + 1) % 10 == 0:
                     print(f"Steps {idx + 1}, Loss: {total_loss.item():.2f} "
                           f"Max memory {(torch.cuda.max_memory_allocated() / (1024 ** 3)):.3f}")
                     torch.cuda.reset_peak_memory_stats()
+                    # print({loss_type: round(loss_val.item(), 4) for loss_type, loss_val in loss_dict.items()})
 
             # Update epochs done
             self.train_info['epoch'] = epoch + 1
             # Validation performance
             fscore, threshold = self.eval_model()
-
 
             # Update model if validation performance improves
             if fscore > self.train_info['val_perf']:
@@ -241,7 +241,10 @@ class Experiment:
                 if threshold is not None:
                     nonzero_preds = torch.nonzero((preds >= threshold), as_tuple=False)
                     pred_mentions_idx = nonzero_preds.tolist()
-                    realis_nonzero = torch.argmax(pred_realis[nonzero_preds[:, 0].tolist()], dim=1).tolist()
+                    if len(pred_mentions_idx):
+                        realis_nonzero = torch.argmax(pred_realis[nonzero_preds[:, 0].tolist()], dim=1).tolist()
+                    else:
+                        realis_nonzero = []
 
                     mask_nonzero_idx = torch.squeeze(torch.nonzero(flat_cand_mask, as_tuple=False), dim=1).tolist()
                     token_idx_to_orig_span_start = dev_example["token_idx_to_orig_span_start"]

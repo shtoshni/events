@@ -21,7 +21,7 @@ def get_mention_model_name(args):
         model_name_suffix += 'local_'
 
     if args.use_srl:
-        model_name_suffix += 'srl_'
+        model_name_suffix += f'srl_{args.srl_loss_wt}_'
 
     if not args.add_speaker_tags:
         model_name_suffix += 'no_speaker_'
