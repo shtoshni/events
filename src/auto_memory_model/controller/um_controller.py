@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+from collections import OrderedDict
 from auto_memory_model.memory.um_memory import UnboundedMemory
 from auto_memory_model.controller.base_controller import BaseController
-from coref_utils.utils import get_mention_to_cluster_idx
+from coref_utils.utils import get_mention_to_type_cluster_idx
 from pytorch_utils.label_smoothing import LabelSmoothingLoss
 
 
@@ -25,29 +26,33 @@ class UnboundedMemController(BaseController):
     @staticmethod
     def get_actions(pred_mentions, clusters):
         # Useful data structures
-        mention_to_cluster = get_mention_to_cluster_idx(clusters)
+        mention_to_type_cluster = get_mention_to_type_cluster_idx(clusters)
 
-        actions = []
+        actions = OrderedDict()
         cell_to_cluster = {}
         cluster_to_cell = {}
 
         cell_counter = 0
         for mention in pred_mentions:
-            if tuple(mention) not in mention_to_cluster:
+            if tuple(mention) not in mention_to_type_cluster:
                 # Not a mention
-                actions.append((-1, 'i'))
+                actions[tuple(mention)] = [(-1, -1, 'i')]
             else:
-                mention_cluster = mention_to_cluster[tuple(mention)]
-                if mention_cluster in cluster_to_cell:
-                    # Cluster is already being tracked
-                    actions.append((cluster_to_cell[mention_cluster], 'c'))
-                else:
-                    # Cluster is not being tracked
-                    # Add the mention to being tracked
-                    cluster_to_cell[mention_cluster] = cell_counter
-                    cell_to_cluster[cell_counter] = mention_cluster
-                    actions.append((cell_counter, 'o'))
-                    cell_counter += 1
+                type_cluster_set = mention_to_type_cluster[tuple(mention)]
+                type_cluster_list = sorted(list(type_cluster_set), key=lambda x: x[0])
+
+                actions[tuple(mention)] = []
+                for ment_type, cluster_idx in type_cluster_list:
+                    if cluster_idx in cluster_to_cell:
+                        # Cluster is already being tracked
+                        actions[tuple(mention)].append([ment_type, cluster_to_cell[cluster_idx], 'c'])
+                    else:
+                        # Cluster is not being tracked
+                        # Add the mention to being tracked
+                        cluster_to_cell[cluster_idx] = cell_counter
+                        cell_to_cluster[cell_counter] = cluster_idx
+                        actions[tuple(mention)].append([ment_type, cell_counter, 'o'])
+                        cell_counter += 1
 
         return actions
 

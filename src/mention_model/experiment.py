@@ -236,34 +236,29 @@ class Experiment:
             # Output file to write the outputs
             agg_results = {}
             for dev_example in dev_examples:
-                preds, pred_realis, y, flat_cand_mask = model(deepcopy(dev_example))
+                preds, y, flat_cand_mask = model(deepcopy(dev_example))
+
+                gt_mentions = set()
+                for cluster in dev_example["clusters"]:
+                    for mention in cluster:
+                        span_start, span_end, mention_info = mention
+                        gt_mentions.add((span_start, span_end))
 
                 if threshold is not None:
                     nonzero_preds = torch.nonzero((preds >= threshold), as_tuple=False)
                     pred_mentions_idx = nonzero_preds.tolist()
-                    if len(pred_mentions_idx):
-                        realis_nonzero = torch.argmax(pred_realis[nonzero_preds[:, 0].tolist()], dim=1).tolist()
-                    else:
-                        realis_nonzero = []
 
                     mask_nonzero_idx = torch.squeeze(torch.nonzero(flat_cand_mask, as_tuple=False), dim=1).tolist()
-                    token_idx_to_orig_span_start = dev_example["token_idx_to_orig_span_start"]
-                    token_idx_to_orig_span_end = dev_example["token_idx_to_orig_span_end"]
 
                     pred_mentions = []
-                    for (flattened_idx, event_subtype_idx) in pred_mentions_idx:
+                    for flattened_idx in pred_mentions_idx:
+                        if isinstance(flattened_idx, list):
+                            flattened_idx = flattened_idx[0]
                         orig_flattened_idx = mask_nonzero_idx[flattened_idx]
                         token_idx = orig_flattened_idx // max_span_width
                         num_tokens = orig_flattened_idx % max_span_width
 
-                        pred_mentions.append((token_idx, token_idx + num_tokens, event_subtype_idx))
-
-                    gt_mentions = []
-                    for cluster in dev_example["clusters"]:
-                        for mention in cluster:
-                            span_start, span_end, mention_info = mention
-                            subtype_val = mention_info["subtype_val"]
-                            gt_mentions.append((span_start, span_end, subtype_val))
+                        pred_mentions.append((token_idx, token_idx + num_tokens))
 
                     set_gt = set(gt_mentions)
                     set_pred = set(pred_mentions)
@@ -273,38 +268,12 @@ class Experiment:
 
                     log_example = dict(dev_example)
                     log_example["pred_mentions"] = pred_mentions
-                    log_example["gt_mentions"] = gt_mentions
+                    log_example["gt_mentions"] = list(gt_mentions)
                     log_example["f_score"] = 200 * prec * recall / (prec + recall + 1e-8)
 
                     log_f.write(json.dumps(log_example) + "\n")
 
-                if split == "test":
-                    doc_key = dev_example['doc_key']
-                    tbf_f.write(f"#BeginOfDocument {doc_key}\n")
-
-                    orig_doc_str = dev_example["orig_doc"]
-
-                    for (flattened_idx, event_subtype_idx), realis_val in zip(pred_mentions_idx, realis_nonzero):
-                        orig_flattened_idx = mask_nonzero_idx[flattened_idx]
-                        token_idx = orig_flattened_idx // max_span_width
-                        num_tokens = orig_flattened_idx % max_span_width
-
-                        if str(token_idx) in token_idx_to_orig_span_start and \
-                                str(token_idx + num_tokens) in token_idx_to_orig_span_end:
-                            orig_span_start = token_idx_to_orig_span_start[str(token_idx)]
-                            orig_span_end = token_idx_to_orig_span_end[str(token_idx + num_tokens)]
-
-                            span_boundary_str = f"{orig_span_start},{orig_span_end}"
-
-                            orig_span_str = orig_doc_str[orig_span_start: orig_span_end]
-                            event_subtype_name = EVENT_SUBTYPES_NAME[event_subtype_idx]
-
-                            tbf_f.write(f"brat_conversion\t{doc_key}\tE{mention_counter}\t{span_boundary_str}\t"
-                                        f"{orig_span_str}\t{event_subtype_name}\t{REALIS_VALS[realis_val]}\n")
-                            mention_counter += 1
-                    tbf_f.write(f"#EndOfDocument\n")
-
-                all_golds += sum([len(cluster) for cluster in dev_example["clusters"]])
+                all_golds += len(gt_mentions)
                 total_gold += torch.sum(y).item()
 
                 if threshold:
@@ -317,7 +286,7 @@ class Experiment:
                     agg_results[threshold]['total_preds'] += total_preds
 
                 else:
-                    threshold_range = np.arange(0.0, 0.5, 0.01)
+                    threshold_range = np.arange(0.0, 1.00, 0.01)
                     for cur_threshold in threshold_range:
                         corr, total_preds, total_y = self.eval_preds(
                             preds, y, threshold=cur_threshold)

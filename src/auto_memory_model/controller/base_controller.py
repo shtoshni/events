@@ -46,13 +46,10 @@ class BaseController(nn.Module):
         self.other.event_subtype_embeddings = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
         self.other.doc_type_embeddings = nn.Embedding(len(DOC_TYPES_TO_IDX), self.emb_size)
 
-        self.other.mention_mlp = nn.ModuleDict()
-
-        for category, category_vals in zip(["event_subtype"], [EVENT_SUBTYPES]):
-            self.other.mention_mlp[category] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
-                hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
-                bias=True, drop_module=self.drop_module)
+        self.other.mention_mlp = MLP(
+            input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
+            hidden_size=self.mlp_size, output_size=1, num_hidden_layers=1,
+            bias=True, drop_module=self.drop_module)
 
         self.other.span_width_mlp = MLP(
             input_size=20, hidden_size=self.mlp_size,
@@ -64,7 +61,7 @@ class BaseController(nn.Module):
         self.loss_fn = {}
 
     def get_mention_width_scores(self, cand_starts, cand_ends, subtoken_map):
-        span_width_indices = [subtoken_map[ment_end] - subtoken_map[ment_start]
+        span_width_indices = [ment_end - ment_start
                               for (ment_end, ment_start) in zip(cand_ends.tolist(), cand_starts.tolist())]
         span_width_embs = self.other.span_width_prior_embeddings(torch.tensor(span_width_indices).long().cuda())
         width_scores = torch.squeeze(self.other.span_width_mlp(span_width_embs), dim=-1)
@@ -75,7 +72,7 @@ class BaseController(nn.Module):
         span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
 
         # Add span width embeddings
-        span_width_indices = [subtoken_map[ment_end] - subtoken_map[ment_start]
+        span_width_indices = [ment_end - ment_start
                               for (ment_end, ment_start) in zip(ment_ends.tolist(), ment_starts.tolist())]
         span_width_embs = self.other.span_width_embeddings(torch.tensor(span_width_indices).long().cuda())
         span_emb_list.append(span_width_embs)

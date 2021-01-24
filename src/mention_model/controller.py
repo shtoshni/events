@@ -10,13 +10,29 @@ class Controller(BaseController):
     def __init__(self,  srl_loss_wt=1.0, **kwargs):
         super(Controller, self).__init__(**kwargs)
         self.srl_loss_wt = srl_loss_wt
-        for category, category_vals in zip(["event_type", "realis"], [EVENT_TYPES, REALIS_VALS]):
-            self.other.mention_mlp[category] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
-                hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
-                bias=True, drop_module=self.drop_module)
+        self.other.mention_mlp = MLP(
+            input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
+            hidden_size=self.mlp_size, output_size=1, num_hidden_layers=1,
+            bias=True, drop_module=self.drop_module)
 
         self.mention_loss_fn = nn.BCEWithLogitsLoss(reduction='sum')
+
+    def get_gold_mentions(self, clusters, num_words, flat_cand_mask):
+        if self.training and self.label_smoothing_wt > 0.0:
+            gold_ments = self.label_smoothing_wt * torch.ones(num_words, self.max_span_width).cuda()
+        else:
+            gold_ments = torch.zeros(num_words, self.max_span_width).cuda()
+
+        for cluster in clusters:
+            for mention in cluster:
+                span_start, span_end, mention_info = mention
+
+                span_width = span_end - span_start + 1
+                if span_width <= self.max_span_width:
+                    span_width_idx = span_width - 1
+                    gold_ments[span_start, span_width_idx] = (1.0 - self.label_smoothing_wt if self.training else 1.0)
+
+        return gold_ments.reshape(-1)[flat_cand_mask].float()
 
     def forward(self, example, teacher_forcing=False, final_eval=False, debug=False):
         """
@@ -35,25 +51,22 @@ class Controller(BaseController):
         pred_mention_probs = {}
         loss = {}
 
-        for category in ["event_subtype", "event_type", "realis"]:
-            mention_logits = torch.squeeze(self.other.mention_mlp[category](span_embs), dim=-1)
-            if category == "event_subtype" or category == "event_type":
-                ment_width_scores = self.get_mention_width_scores(
-                    filt_cand_starts, filt_cand_ends, example["subtoken_map"])
-                mention_logits += torch.unsqueeze(ment_width_scores, dim=-1)
+        mention_logits = torch.squeeze(self.other.mention_mlp(span_embs), dim=-1)
+        ment_width_scores = self.get_mention_width_scores(
+            filt_cand_starts, filt_cand_ends, example["subtoken_map"])
+        mention_logits += torch.squeeze(ment_width_scores, dim=-1)
 
-            if self.training:
-                mention_loss = self.mention_loss_fn(mention_logits, filt_gold_mentions[category])
-                total_weight = filt_cand_starts.shape[0]
+        if self.training:
+            mention_loss = self.mention_loss_fn(mention_logits, filt_gold_mentions)
+            total_weight = filt_cand_starts.shape[0]
 
-                loss[category] = mention_loss / total_weight
-                if self.doc_encoder.use_srl:
-                    loss['srl'] = output[-1] * self.srl_loss_wt
-            else:
-                pred_mention_probs[category] = torch.sigmoid(mention_logits).detach()
+            loss['ment_loss'] = mention_loss / total_weight
+            if self.doc_encoder.use_srl:
+                loss['srl'] = output[-1] * self.srl_loss_wt
+        else:
+            pred_mention_probs = torch.sigmoid(mention_logits).detach()
 
         if self.training:
             return loss
         else:
-            return pred_mention_probs["event_subtype"], pred_mention_probs["realis"], \
-                   filt_gold_mentions["event_subtype"], flat_cand_mask
+            return pred_mention_probs, filt_gold_mentions, flat_cand_mask
