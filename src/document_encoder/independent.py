@@ -109,7 +109,7 @@ class IndependentDocEncoder(BaseDocEncoder):
                 attention_mask += torch.diag(
                     torch.ones(len(sentence)).cuda(), diagonal=offset)[:len(sentence), :len(sentence)]
 
-            attention_mask = torch.clip(attention_mask, min=0, max=1)
+            attention_mask = torch.clamp(attention_mask, min=0, max=1)
 
             attention_mask_list.append((1 - attention_mask) * -1e4)
             doc_offset += len(sentence)
