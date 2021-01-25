@@ -6,7 +6,7 @@ from kbp_2015_utils.constants import SPEAKER_TAGS
 
 class BaseDocEncoder(nn.Module):
     def __init__(self, model_size='base', pretrained_model=None, finetune=False, max_training_segments=None,
-                 add_speaker_tags=False, use_local_attention=False, num_local_heads=12, use_srl=True, **kwargs):
+                 add_speaker_tags=False, use_local_attention=False, num_local_heads=12, use_srl=False, **kwargs):
         super(BaseDocEncoder, self).__init__()
         self.max_training_segments = max_training_segments
         self.finetune = finetune
