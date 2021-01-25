@@ -62,7 +62,7 @@ class Controller(nn.Module):
         """
         Encode a batch of excerpts.
         """
-        encoded_doc = self.doc_encoder(example)
+        encoded_doc = self.doc_encoder(example)[0]
 
         num_words = encoded_doc.shape[0]
         assert(num_words == sum([len(sentence) for sentence in example["sentences"]]))

@@ -81,7 +81,7 @@ def main():
                  "srl_conll09_mlp_200_model_base_emb_endpoint_type_spanbert_drop_0.0ft/best_models/model.pth"
 
     srl_model = Inference(model_path)
-    input_dir = "/home/shtoshni/Research/events/proc_data/kbp_2015/cleaned_no_speaker"
+    input_dir = "/home/shtoshni/Research/events/proc_data/kbp_2015/cleaned"
     output_dir = "/home/shtoshni/Research/events/proc_data/kbp_2015/srl"
     for split in ["dev", "test", "train"]:
         process_split(srl_model, input_dir, output_dir, split=split)

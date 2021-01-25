@@ -27,7 +27,7 @@ def main():
 
     # Doc encoder
     parser.add_argument('-model_size', default='base', type=str, help='BERT model type')
-    parser.add_argument('-pretrained_bert_dir', default=None, type=str,
+    parser.add_argument('-pretrained_model', default="spanbert", type=str,
                         help='SpanBERT model location')
     # '/home/shtoshni/Research/litbank_coref/resources/'
     parser.add_argument('-max_segment_len', default=512, type=int,
