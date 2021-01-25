@@ -317,7 +317,7 @@ class Experiment:
                     agg_results[threshold]['total_preds'] += total_preds
 
                 else:
-                    threshold_range = np.arange(0.0, 0.5, 0.01)
+                    threshold_range = np.arange(0.0, 1.00, 0.01)
                     for cur_threshold in threshold_range:
                         corr, total_preds, total_y = self.eval_preds(
                             preds, y, threshold=cur_threshold)

@@ -59,8 +59,8 @@ class IndependentDocEncoder(BaseDocEncoder):
                     weight += torch.sum(gt_attn_map)
 
             # print(loss/weight)
-            arg_output = self.layer_norm(torch.cat(arg_output, dim=0) + encoded_output)
-            output = (arg_output,)
+            arg_output = torch.cat(arg_output, dim=0)  # self.layer_norm(torch.cat(arg_output, dim=0) + encoded_output)
+            output = (encoded_output, arg_output,)
 
             # return output + (arg_output, loss/weight,)
             # arg_output = torch.cat(arg_output, dim=0)

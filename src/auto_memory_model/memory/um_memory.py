@@ -6,24 +6,20 @@ from kbp_2015_utils.utils import get_event_type
 class UnboundedMemory(BaseMemory):
     def __init__(self, **kwargs):
         super(UnboundedMemory, self).__init__(**kwargs)
-        self.mem_vectors = torch.zeros(1, self.mem_size).cuda()
-        self.ent_counter = torch.tensor([0.0]).cuda()
-        self.last_mention_idx = torch.zeros(1).long().cuda()
-        self.last_sent_idx = torch.zeros(1).long().cuda()
-        self.cluster_type = torch.tensor([-1]).cuda()
-        self.last_mention_boundary = []
 
     def initialize_memory(self):
         """Initialize the memory to null with only 1 memory cell to begin with."""
         self.mem_vectors = torch.zeros(1, self.mem_size).cuda()
+        self.local_vectors = torch.zeros(1, self.mem_size).cuda()
         self.ent_counter = torch.tensor([0.0]).cuda()
         self.last_mention_idx = torch.zeros(1).long().cuda()
         self.last_sent_idx = torch.zeros(1).long().cuda()
         self.cluster_type = torch.tensor([-1]).cuda()
         self.last_mention_boundary = []
 
-    def predict_action(self, ment_boundary, query_vector, ment_type, ment_score, feature_embs):
-        coref_new_scores = self.get_coref_new_scores(ment_boundary, query_vector, ment_type, ment_score, feature_embs)
+    def predict_action(self, ment_boundary, query_vector, local_emb, ment_type, ment_score, feature_embs):
+        coref_new_scores = self.get_coref_new_scores(
+            ment_boundary, query_vector, local_emb, ment_type, ment_score, feature_embs)
 
         # Negate the mention score
         not_a_ment_score = -ment_score
@@ -54,8 +50,8 @@ class UnboundedMemory(BaseMemory):
         else:
             raise NotImplementedError
 
-    def forward(self, example, mention_emb_list, mention_scores, pred_mentions, gt_actions, rand_fl_list,
-                teacher_forcing=False):
+    def forward(self, example, mention_emb_list, local_emb_list, mention_scores, pred_mentions,
+                gt_actions, rand_fl_list, teacher_forcing=False):
         # Initialize memory
         self.initialize_memory()
 
@@ -69,9 +65,9 @@ class UnboundedMemory(BaseMemory):
 
         follow_gt = self.training or teacher_forcing
 
-        for ment_idx, (ment_emb,  (span_start, span_end, event_subtype), ment_score, (gt_cell_idx, gt_action_str)) in \
-                enumerate(zip(mention_emb_list, pred_mentions, mention_scores, gt_actions)):
-            query_vector = ment_emb
+        for ment_idx, (ment_emb, local_emb, (span_start, span_end, event_subtype), ment_score,
+                       (gt_cell_idx, gt_action_str)) in enumerate(
+                zip(mention_emb_list, local_emb_list, pred_mentions, mention_scores, gt_actions)):
 
             metadata['last_action'] = self.action_str_to_idx[last_action_str]
             feature_embs = self.get_feature_embs(ment_idx, metadata)
@@ -86,7 +82,7 @@ class UnboundedMemory(BaseMemory):
                 # (c) Training and mention is an invalid mention and randomly sampled float is less than invalid
                 # sampling probability
                 coref_new_scores, overwrite_ign_scores = self.predict_action(
-                    ment_boundary, query_vector, event_subtype, ment_score, feature_embs)
+                    ment_boundary, ment_emb, local_emb, event_subtype, ment_score, feature_embs)
 
                 pred_cell_idx, pred_action_str = self.interpret_scores(
                     coref_new_scores, overwrite_ign_scores, first_overwrite)
@@ -109,7 +105,9 @@ class UnboundedMemory(BaseMemory):
             if first_overwrite and action_str == 'o':
                 first_overwrite = False
                 # We start with a single empty memory cell
-                self.mem_vectors = torch.unsqueeze(query_vector, dim=0)
+                self.mem_vectors = torch.unsqueeze(ment_emb, dim=0)
+                if self.use_srl or self.use_local_attention:
+                    self.local_vectors = torch.unsqueeze(local_emb, dim=0)
                 self.ent_counter = torch.tensor([1.0]).cuda()
                 self.last_mention_idx[0] = ment_idx
                 self.last_sent_idx[0] = sent_idx
@@ -124,7 +122,7 @@ class UnboundedMemory(BaseMemory):
 
                 # print(cell_idx, action_str, mem_vectors.shape[0])
                 if action_str == 'c':
-                    self.coref_update(query_vector, cell_idx, mask)
+                    self.coref_update(ment_emb, local_emb, cell_idx, mask)
                     self.ent_counter = self.ent_counter + cell_mask
                     self.last_mention_idx[cell_idx] = ment_idx
                     self.last_sent_idx[cell_idx] = sent_idx
@@ -134,7 +132,10 @@ class UnboundedMemory(BaseMemory):
                         assert (event_type == self.cluster_type[cell_idx])
                 elif action_str == 'o':
                     # Append the new vector
-                    self.mem_vectors = torch.cat([self.mem_vectors, torch.unsqueeze(query_vector, dim=0)], dim=0)
+                    self.mem_vectors = torch.cat([self.mem_vectors, torch.unsqueeze(ment_emb, dim=0)], dim=0)
+                    if self.use_srl or self.use_local_attention:
+                        self.local_vectors = torch.cat(
+                            [self.local_vectors, torch.unsqueeze(local_emb, dim=0)], dim=0)
                     self.ent_counter = torch.cat([self.ent_counter, torch.tensor([1.0]).cuda()], dim=0)
                     self.last_mention_idx = torch.cat([self.last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
                     self.last_sent_idx = torch.cat([self.last_sent_idx, torch.tensor([sent_idx]).cuda()], dim=0)

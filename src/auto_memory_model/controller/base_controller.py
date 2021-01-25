@@ -15,10 +15,12 @@ class BaseController(nn.Module):
                  ment_emb='endpoint', ment_ordering='ment_type',
                  mlp_size=1000, emb_size=20,
                  sample_invalid=1.0, label_smoothing_wt=0.0,
-                 dataset='kbp_2015',  focus_group='both', use_srl=False, srl_loss_wt=1.0,
+                 dataset='kbp_2015',  focus_group='both',
+                 use_local_attention=False, use_srl=False, srl_loss_wt=1.0,
                  **kwargs):
         super(BaseController, self).__init__()
         self.dataset = dataset
+        self.use_local_attention = use_local_attention
         self.use_srl = use_srl
         self.srl_loss_wt = srl_loss_wt
 
@@ -27,7 +29,7 @@ class BaseController(nn.Module):
         self.sample_invalid = sample_invalid
         self.label_smoothing_wt = label_smoothing_wt
 
-        self.doc_encoder = IndependentDocEncoder(use_srl=use_srl, **kwargs)
+        self.doc_encoder = IndependentDocEncoder(use_local_attention=use_local_attention, use_srl=use_srl, **kwargs)
 
         self.hsize = self.doc_encoder.hsize
         self.mlp_size = mlp_size
@@ -64,7 +66,7 @@ class BaseController(nn.Module):
         self.loss_fn = {}
 
     def get_mention_width_scores(self, cand_starts, cand_ends, subtoken_map):
-        span_width_indices = [subtoken_map[ment_end] - subtoken_map[ment_start]
+        span_width_indices = [ment_end - ment_start
                               for (ment_end, ment_start) in zip(cand_ends.tolist(), cand_starts.tolist())]
         span_width_embs = self.other.span_width_prior_embeddings(torch.tensor(span_width_indices).long().cuda())
         width_scores = torch.squeeze(self.other.span_width_mlp(span_width_embs), dim=-1)
@@ -75,7 +77,7 @@ class BaseController(nn.Module):
         span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
 
         # Add span width embeddings
-        span_width_indices = [subtoken_map[ment_end] - subtoken_map[ment_start]
+        span_width_indices = [ment_end - ment_start
                               for (ment_end, ment_start) in zip(ment_ends.tolist(), ment_starts.tolist())]
         span_width_embs = self.other.span_width_embeddings(torch.tensor(span_width_indices).long().cuda())
         span_emb_list.append(span_width_embs)
@@ -236,8 +238,15 @@ class BaseController(nn.Module):
             gt_actions = [(-1, 'i')] * len(pred_mentions)
 
         outputs = (ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, pred_scores_list)
+
+        if self.use_local_attention or self.use_srl:
+            local_embs = self.get_span_embeddings(example["doc_type"], encoding_outputs[1], pred_starts, pred_ends,
+                                                  example["subtoken_map"], event_subtype=pred_ment_type)
+            local_mention_emb_list = torch.unbind(local_embs, dim=0)
+            outputs = outputs + (local_mention_emb_list,)
+
         if self.use_srl:
-            outputs = outputs + (encoding_outputs[1],)
+            outputs = outputs + (encoding_outputs[-1],)
         return outputs
 
     def forward(self, example, teacher_forcing=False):

@@ -17,11 +17,11 @@ def get_mention_model_name(args):
     if args.dropout_rate != 0.5:
         model_name_suffix += f'drop_{args.dropout_rate}'
 
-    if args.use_local_attention:
-        model_name_suffix += 'local_'
+    # if args.use_local_attention:
+    #     model_name_suffix += 'local_'
 
-    if args.use_srl:
-        model_name_suffix += f'srl_{args.srl_loss_wt}_'
+    # if args.use_srl:
+    #     model_name_suffix += f'srl_{args.srl_loss_wt}_'
 
     if not args.add_speaker_tags:
         model_name_suffix += 'no_speaker_'

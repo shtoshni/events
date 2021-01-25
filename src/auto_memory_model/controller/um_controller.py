@@ -16,7 +16,8 @@ class UnboundedMemController(BaseController):
 
         self.memory_net = UnboundedMemory(
             hsize=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
-            drop_module=self.drop_module, **kwargs)
+            drop_module=self.drop_module,
+            **kwargs)
 
         # Set loss functions
         self.loss_fn = {'over': nn.CrossEntropyLoss(reduction='sum', ignore_index=-100)}
@@ -112,13 +113,17 @@ class UnboundedMemController(BaseController):
         outputs = self.get_mention_embs_and_actions(example)
         ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, mention_score_list = outputs[:5]
 
+        local_emb_list = [None] * len(mention_emb_list)
+        if self.use_srl or self.use_local_attention:
+            local_emb_list = outputs[5]
+
         follow_gt = self.training or teacher_forcing
         rand_fl_list = np.random.random(len(mention_emb_list))
         if teacher_forcing:
             rand_fl_list = np.zeros_like(rand_fl_list)
 
         action_prob_list, action_list = self.memory_net(
-            example, mention_emb_list, mention_score_list, pred_mentions, gt_actions, rand_fl_list,
+            example, mention_emb_list, local_emb_list, mention_score_list, pred_mentions, gt_actions, rand_fl_list,
             teacher_forcing=teacher_forcing)
 
         coref_loss = 0.0
@@ -142,7 +147,7 @@ class UnboundedMemController(BaseController):
                     loss['total'] += ment_pred_loss
 
                 if self.doc_encoder.use_srl:
-                    loss['total'] += self.srl_loss_wt * outputs[5]
+                    loss['total'] += self.srl_loss_wt * outputs[-1]
 
             return loss, action_list, pred_mentions, gt_actions
         else:

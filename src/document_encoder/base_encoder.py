@@ -8,7 +8,7 @@ from kbp_2015_utils.constants import SPEAKER_TAGS
 
 class BaseDocEncoder(nn.Module):
     def __init__(self, model_size='base', pretrained_bert_dir=None, finetune=False, max_training_segments=None,
-                 add_speaker_tags=False, use_local_attention=False, num_local_heads=12, use_srl=True, **kwargs):
+                 add_speaker_tags=False, use_local_attention=False, num_local_heads=6, use_srl=True, **kwargs):
         super(BaseDocEncoder, self).__init__()
         self.max_training_segments = max_training_segments
         self.finetune = finetune
@@ -38,7 +38,7 @@ class BaseDocEncoder(nn.Module):
                 if num_local_heads > 0:
                     bert_config.num_attention_heads = num_local_heads
                 else:
-                    bert_config.num_attention_heads = 6
+                    bert_config.num_attention_heads = 12
             self.additional_layer = BertLayer(bert_config)
             self.layer_norm = nn.LayerNorm(bert_config.hidden_size)
 
@@ -51,6 +51,3 @@ class BaseDocEncoder(nn.Module):
 
         bert_hidden_size = self.bert.config.hidden_size
         self.hsize = bert_hidden_size
-
-        # if self.use_local_attention or self.use_srl:
-        #     self.hsize = 2 * self.hsize

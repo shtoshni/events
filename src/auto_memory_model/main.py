@@ -115,7 +115,7 @@ def main():
                 'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
                 'num_train_docs', 'sample_invalid', 'max_training_segments',
-                'over_loss_wt',  "new_ent_wt",  # Training params
+                'over_loss_wt',  "new_ent_wt", "srl_loss_wt",  # Training params
                 ]
     for key, val in vars(args).items():
         if key in imp_opts:

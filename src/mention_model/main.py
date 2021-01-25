@@ -28,7 +28,7 @@ def main():
 
     # Doc encoder
     parser.add_argument('-model_size', default='base', type=str, help='BERT model type')
-    parser.add_argument('-pretrained_bert_dir', default="/home/shtoshni/Research/events/pretrained_resources",
+    parser.add_argument('-pretrained_bert_dir', default="spanbert",
                         type=str, help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
