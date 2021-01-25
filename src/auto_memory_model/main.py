@@ -29,8 +29,8 @@ def main():
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
-    parser.add_argument('-pretrained_bert_dir', default='spanbert', type=str,
-                        help='SpanBERT model location')
+    parser.add_argument('-pretrained_model', default='spanbert', type=str,
+                        help='Pretrained BERT model')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
     parser.add_argument('-add_speaker_tags', default=False, action='store_true',
@@ -49,11 +49,8 @@ def main():
                         'clustered before event mentions, otherwise mentions are ordered by their location in doc.')
 
     # Clustering variables
-    parser.add_argument('-mem_type', default='unbounded',
-                        choices=['alternate', 'unbounded'],
+    parser.add_argument('-mem_type', default='unbounded', choices=['unbounded'],
                         help="Memory type.")
-    parser.add_argument('-num_cells', default=20, type=int,
-                        help="Number of memory cells.")
     parser.add_argument('-mem_size', default=None, type=int,
                         help='Memory size used in the model')
     parser.add_argument('-mlp_size', default=1000, type=int,
@@ -109,7 +106,7 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'max_segment_len', 'use_local_attention',
+    imp_opts = ['model_size', 'pretrained_model', 'max_segment_len', 'use_local_attention',
                 'max_span_width', 'ment_emb', # 'ment_ordering',
                 'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
                 'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
@@ -117,6 +114,7 @@ def main():
                 'num_train_docs', 'sample_invalid', 'max_training_segments',
                 'over_loss_wt',  "new_ent_wt", "srl_loss_wt",  # Training params
                 ]
+
     for key, val in vars(args).items():
         if key in imp_opts:
             opt_dict[key] = val

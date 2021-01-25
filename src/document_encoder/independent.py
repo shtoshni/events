@@ -39,7 +39,7 @@ class IndependentDocEncoder(BaseDocEncoder):
                 # Detach the output of BERT
                 window_output = self.additional_layer(
                     torch.unsqueeze(encoded_window, dim=0),
-                    output_attentions=True, attention_mask=torch.unsqueeze(attention_mask, dim=0))
+                    output_attentions=True, attention_mask=attention_mask[None, None, :, :])
 
                 arg_output.append(torch.squeeze(window_output[0], dim=0))
 
@@ -104,6 +104,12 @@ class IndependentDocEncoder(BaseDocEncoder):
             for sent_idx in range(min_sent_idx, max_sent_idx + 1):
                 sent_idx_iden = torch.unsqueeze((sentence_map_tens == sent_idx).float(), dim=1)
                 attention_mask += sent_idx_iden * torch.transpose(sent_idx_iden, 0, 1)
+
+            for offset in range(-10, 11):
+                attention_mask += torch.diag(
+                    torch.ones(len(sentence)).cuda(), diagonal=offset)[:len(sentence), :len(sentence)]
+
+            attention_mask = torch.clip(attention_mask, min=0, max=1)
 
             attention_mask_list.append((1 - attention_mask) * -1e4)
             doc_offset += len(sentence)

@@ -70,7 +70,6 @@ class BaseMemory(nn.Module):
         self.cluster_type = torch.tensor([-1]).cuda()
         self.last_mention_boundary = []
 
-
     @staticmethod
     def get_distance_bucket(distances):
         logspace_idx = torch.floor(torch.log(distances.float()) / LOG2).long() + 3
@@ -116,9 +115,9 @@ class BaseMemory(nn.Module):
 
         return cell_mask
 
-    def get_feature_embs(self, ment_idx, metadata):
+    def get_feature_embs(self, ment_idx, sent_idx, metadata):
         ment_dist_embs = self.get_ment_distance_emb(ment_idx - self.last_mention_idx)
-        sent_dist_embs = self.get_sent_distance_emb(ment_idx - self.last_sent_idx)
+        sent_dist_embs = self.get_sent_distance_emb(sent_idx - self.last_sent_idx)
 
         counter_embs = self.get_counter_emb(self.ent_counter)
 
@@ -142,25 +141,6 @@ class BaseMemory(nn.Module):
         feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
         return feature_embs
 
-    def get_ment_feature_embs(self, metadata):
-        # Bucket is 0 for both the embeddings
-        distance_embs = self.distance_embeddings(torch.tensor(0).cuda())
-        counter_embs = self.counter_embeddings(torch.tensor(0).cuda())
-
-        feature_embs_list = [distance_embs, counter_embs]
-
-        if 'genre' in metadata:
-            genre_emb = metadata['genre']
-            feature_embs_list.append(genre_emb)
-
-        if 'last_action' in metadata:
-            last_action_idx = torch.tensor(metadata['last_action']).long().cuda()
-            last_action_emb = self.last_action_embeddings(last_action_idx)
-            feature_embs_list.append(last_action_emb)
-
-        feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
-        return feature_embs
-
     def get_coref_new_scores(self, ment_boundary, query_vector, local_emb, event_subtype, ment_score, feature_embs):
         # Repeat the query vector for comparison against all cells
         num_cells = self.mem_vectors.shape[0]
@@ -169,7 +149,9 @@ class BaseMemory(nn.Module):
         # Event Subtype
         event_type = get_event_type(event_subtype)
 
-        assert (torch.max(torch.abs(query_vector - local_emb)) > 0)
+        if self.use_srl and self.use_local_attention:
+            # Check that the vectors are different
+            assert (torch.max(torch.abs(query_vector - local_emb)) > 0)
 
         # Coref Score
         pair_vec = torch.cat([self.mem_vectors, rep_query_vector, self.mem_vectors * rep_query_vector,

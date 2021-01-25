@@ -371,7 +371,7 @@ class Experiment:
 
                 fscore = evaluator.get_f1() * 100
                 result_dict['fscore'] = round(fscore, 1)
-                logger.info("F-score: %.1f %s" % (fscore, perf_str))
+                # logger.info("F-score: %.1f %s" % (fscore, perf_str))
 
                 logger.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
                             (corr_actions / total_actions, oracle_evaluator.get_prf()[2]))

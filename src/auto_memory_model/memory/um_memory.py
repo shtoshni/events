@@ -1,5 +1,5 @@
 import torch
-from auto_memory_model.memory.base_fixed_memory import BaseMemory
+from auto_memory_model.memory.base_memory import BaseMemory
 from kbp_2015_utils.utils import get_event_type
 
 
@@ -70,9 +70,9 @@ class UnboundedMemory(BaseMemory):
                 zip(mention_emb_list, local_emb_list, pred_mentions, mention_scores, gt_actions)):
 
             metadata['last_action'] = self.action_str_to_idx[last_action_str]
-            feature_embs = self.get_feature_embs(ment_idx, metadata)
             event_type = get_event_type(event_subtype)
             sent_idx = sentence_map[span_start]
+            feature_embs = self.get_feature_embs(ment_idx, sent_idx, metadata)
             ment_boundary = (span_start, span_end)
 
             if not (follow_gt and gt_action_str == 'i' and rand_fl_list[ment_idx] > self.sample_invalid):

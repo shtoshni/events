@@ -7,7 +7,7 @@ def get_mention_model_name(args):
     # model_name_suffix += 'drop_' + f'{args.dropout_rate}' + '_'
     model_name_suffix += 'model_' + f'{args.model_size}' + '_'
     model_name_suffix += 'emb_' + f'{args.ment_emb}' + '_'
-    model_name_suffix += 'type_' + ('spanbert' if args.pretrained_bert_dir else 'bert') + '_'
+    model_name_suffix += 'type_' + args.pretrained_model + '_'
     model_name_suffix += 'segments_' + f'{args.max_training_segments}' + '_'
     model_name_suffix += 'width_' + f'{args.max_span_width}' + '_'
 
@@ -32,7 +32,7 @@ def get_mention_model_name(args):
     if model_name_suffix[-1] == '_':
         model_name_suffix = model_name_suffix[:-1]
 
-    if args.seed != 0:
-        model_name_suffix += f"_seed_{args.seed}"
+    # if args.seed != 0:
+    #     model_name_suffix += f"_seed_{args.seed}"
     model_name = "ment_" + model_name_suffix
     return model_name
