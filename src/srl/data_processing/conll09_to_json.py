@@ -87,6 +87,7 @@ def process_split(input_dir, output_dir, split='train'):
         "train": "CoNLL2009-ST-English-train.txt",
         "dev": "CoNLL2009-ST-English-development.txt",
         "test": "CoNLL2009-ST-evaluation-English.txt",
+        "trial": "CoNLL2009-ST-English-trial.txt",
     }
 
     input_file = path.join(input_dir, split_to_filename[split])
@@ -99,9 +100,8 @@ def main(args):
     if not path.exists(args.output_dir):
         import os
         os.makedirs(args.output_dir)
-    for split in ['train', 'dev', 'test']:
+    for split in ['trial']:  #['train', 'dev', 'test']:
         process_split(args.input_dir, args.output_dir, split=split)
-
 
 
 def parse_args():

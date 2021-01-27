@@ -135,7 +135,7 @@ class Experiment:
             np.random.seed(self.seed)
             # Try to initialize the mention model part
             if path.exists(self.pretrained_mention_model):
-                print("Found pretrained model!!")
+                logger.info("Found pretrained model!!")
                 checkpoint = torch.load(self.pretrained_mention_model)
                 self.model.load_state_dict(checkpoint['model'], strict=False)
         else:
@@ -154,7 +154,7 @@ class Experiment:
             return
 
         for epoch in range(epochs_done, max_epochs):
-            print("\n\nStart Epoch %d" % (epoch + 1))
+            logger.info("\n\nStart Epoch %d" % (epoch + 1))
             start_time = time.time()
             # Setup training
             model.train()
@@ -204,7 +204,7 @@ class Experiment:
                     continue
                 if self.train_info['global_steps'] % 10 == 0:
                     max_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
-                    print(cur_example["doc_key"], '{:.3f}, Max memory {:.3f}'.format(example_loss, max_mem))
+                    logger.info('{} {:.3f}, Max memory {:.3f}'.format(cur_example["doc_key"], example_loss, max_mem))
                     torch.cuda.reset_peak_memory_stats()
 
             sys.stdout.flush()
@@ -222,18 +222,17 @@ class Experiment:
             if fscore > self.train_info['val_perf']:
                 self.train_info['num_stuck_epochs'] = 0
                 self.train_info['val_perf'] = fscore
-                logging.info('Saving best model')
+                logger.info('Saving best model')
                 self.save_model(self.best_model_path, model_type='best')
 
-            # Save last model
-            self.save_model(self.model_path)
+            # Save last model - but don't do it too frequently (saves time)
+            if self.train_info['epoch'] % 10 == 0:
+                self.save_model(self.model_path)
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
-            logging.info("Epoch: %d, F1: %.1f, Max F1: %.1f, Time: %.2f"
-                         % (epoch + 1, fscore, self.train_info['val_perf'], elapsed_time))
-
-            sys.stdout.flush()
+            logger.info("Epoch: %d, F1: %.1f, Max F1: %.1f, Time: %.2f"
+                        % (epoch + 1, fscore, self.train_info['val_perf'], elapsed_time))
 
             if self.train_info['num_stuck_epochs'] >= NUM_STUCK_EPOCHS:
                 return
@@ -353,8 +352,8 @@ class Experiment:
                     log_f.write(json.dumps(log_example) + "\n")
                     # break
 
-                print("Ground Truth Actions:", gt_class_counter)
-                print("Predicted Actions:", pred_class_counter)
+                logger.info(f"Ground Truth Actions: {gt_class_counter}")
+                logger.info(f"Predicted Actions: {pred_class_counter}")
 
                 # Print individual metrics
                 result_dict = OrderedDict()
@@ -371,7 +370,7 @@ class Experiment:
 
                 fscore = evaluator.get_f1() * 100
                 result_dict['fscore'] = round(fscore, 1)
-                # logger.info("F-score: %.1f %s" % (fscore, perf_str))
+                logger.info("F-score: %.1f %s" % (fscore, perf_str))
 
                 logger.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
                             (corr_actions / total_actions, oracle_evaluator.get_prf()[2]))

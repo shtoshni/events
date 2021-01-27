@@ -25,7 +25,7 @@ def main():
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
         '-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
-    parser.add_argument('-doc_proc', default='srl', choices=['srl', 'cleaned', 'orig'], type=str)
+    parser.add_argument('-doc_proc', default='srl', choices=['bertsrl', 'srl', 'cleaned', 'orig'], type=str)
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
@@ -85,7 +85,7 @@ def main():
                         default=1.0, type=float)
 
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=25, type=int)
+                        help='Maximum number of epochs', default=30, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",
@@ -108,11 +108,11 @@ def main():
     # Only include important options in hash computation
     imp_opts = ['model_size', 'pretrained_model', 'max_segment_len', 'use_local_attention',
                 'max_span_width', 'ment_emb', # 'ment_ordering',
-                'mem_type', 'num_cells', 'mem_size', 'mlp_size',  # Memory params
+                'mem_type', 'mem_size', 'mlp_size',  # Memory params
                 'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
-                'num_train_docs', 'sample_invalid', 'max_training_segments',
-                'over_loss_wt',  "new_ent_wt", "srl_loss_wt",  # Training params
+                'num_train_docs', 'sample_invalid', 'max_training_segments', 'doc_proc',
+                "new_ent_wt", "srl_loss_wt",  # Training params
                 ]
 
     for key, val in vars(args).items():
@@ -121,7 +121,7 @@ def main():
 
     str_repr = str(opt_dict.items())
     hash_idx = hashlib.md5(str_repr.encode("utf-8")).hexdigest()
-    model_name = f"events_{args.dataset}_" + str(hash_idx)
+    model_name = f"coref_{args.dataset}_" + str(hash_idx)
 
     model_dir = path.join(args.base_model_dir, model_name)
     args.model_dir = model_dir
