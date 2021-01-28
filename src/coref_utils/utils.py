@@ -18,3 +18,12 @@ def get_mention_to_cluster_idx(clusters, threshold=1):
             mention_to_cluster_dict[mention] = cluster_idx
     return mention_to_cluster_dict
 
+
+# def get_mention_to_cluster_typeless(clusters, threshold=1):
+#     clusters = [tuple(tuple(mention[:2]) for mention in cluster)
+#                 for cluster in clusters if len(cluster) >= threshold]
+#     mention_to_cluster_dict = {}
+#     for cluster in clusters:
+#         for mention in cluster:
+#             mention_to_cluster_dict[mention] = cluster
+#     return clusters, mention_to_cluster_dict

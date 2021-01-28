@@ -6,11 +6,13 @@ from kbp_2015_utils.constants import SPEAKER_TAGS
 
 class BaseDocEncoder(nn.Module):
     def __init__(self, model_size='base', pretrained_model=None, finetune=False, max_training_segments=None,
-                 add_speaker_tags=False, use_local_attention=False, num_local_heads=12, use_srl=False, **kwargs):
+                 add_speaker_tags=False, use_local_attention=False, num_local_heads=12,
+                 srl_loss_type='cross_entropy', use_srl=False, **kwargs):
         super(BaseDocEncoder, self).__init__()
         self.max_training_segments = max_training_segments
         self.finetune = finetune
         self.use_srl = use_srl
+        self.srl_loss_type = srl_loss_type
 
         # Summary Writer
         if pretrained_model == 'bert':
@@ -30,6 +32,7 @@ class BaseDocEncoder(nn.Module):
         self.use_local_attention = use_local_attention
         if self.use_local_attention or self.use_srl:
             bert_config = BertConfig.from_pretrained(model_name)
+            bert_config.attention_probs_dropout_prob = 0.0
             if self.use_srl:
                 bert_config.num_attention_heads = 12
             else:

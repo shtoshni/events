@@ -83,6 +83,8 @@ def main():
                         default=0.0, type=float)
     parser.add_argument('-srl_loss_wt', help="SRL loss wt",
                         default=1.0, type=float)
+    parser.add_argument('-srl_loss_type', help="SRL loss type",
+                        default='cross_entropy', choices=['cross_entropy', 'diff'], type=str)
 
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=30, type=int)
@@ -114,6 +116,9 @@ def main():
                 'num_train_docs', 'sample_invalid', 'max_training_segments', 'doc_proc',
                 "new_ent_wt", "srl_loss_wt",  # Training params
                 ]
+
+    if args.use_srl:
+        imp_opts.append('srl_loss_type')
 
     for key, val in vars(args).items():
         if key in imp_opts:

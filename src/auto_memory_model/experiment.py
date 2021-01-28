@@ -261,6 +261,7 @@ class Experiment:
 
                 # Output file to write the outputs
                 evaluator = CorefEvaluator()
+                # typeless_evaluator = CorefEvaluator()
                 oracle_evaluator = CorefEvaluator()
                 coref_predictions, subtoken_maps = {}, {}
 

@@ -47,15 +47,13 @@ class IndependentDocEncoder(BaseDocEncoder):
                     gt_attn_map = example["srl_attention_map"][idx]
                     attention = window_output[1]
                     attention = torch.squeeze(attention, dim=0)[:6]
-                    # print(torch.sum())
 
-                    # term = torch.log(torch.sum(attention * gt_attn_map, dim=-1) + 1e-8) * torch.sum(gt_attn_map, dim=-1)
-                    # loss -= torch.sum(term)
-                    attention = attention/(torch.sum(attention, dim=-1, keepdim=True) + 1e-10)
-                    # print(attention.shape)
-                    loss -= torch.sum((torch.log(attention + 1e-10) - torch.log(gt_attn_map + 1e-10)) * gt_attn_map)
+                    if self.srl_loss_type == 'cross_entropy':
+                        loss -= torch.sum((torch.log(attention + 1e-10) - torch.log(gt_attn_map + 1e-10)) * gt_attn_map)
 
-                    # loss += torch.norm((attention - gt_attn_map) * (gt_attn_map > 0).float(), p='fro') ** 2
+                    else:
+                        loss += torch.norm((attention - gt_attn_map) * (gt_attn_map > 0).float(), p='fro') ** 2
+
                     weight += torch.sum(gt_attn_map)
 
             # print(loss/weight)
