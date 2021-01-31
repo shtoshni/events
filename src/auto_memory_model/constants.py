@@ -1,2 +1,2 @@
 
-SPANS_TO_LEN_RATIO = {"kbp_2015": 0.2}
+SPANS_TO_LEN_RATIO = {"kbp_2015": 0.1}

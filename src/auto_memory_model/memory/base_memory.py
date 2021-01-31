@@ -60,6 +60,7 @@ class BaseMemory(nn.Module):
         self.ment_dist_embeddings = nn.Embedding(10, self.emb_size)
         self.sent_dist_embeddings = nn.Embedding(10, self.emb_size)
         self.counter_embeddings = nn.Embedding(10, self.emb_size)
+        self.event_subtype_embeddings = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
 
         # Memory variables
         self.mem_vectors = torch.zeros(1, self.mem_size).cuda()
@@ -141,7 +142,23 @@ class BaseMemory(nn.Module):
         feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
         return feature_embs
 
-    def get_coref_new_scores(self, ment_boundary, query_vector, local_emb, event_subtype, ment_score, feature_embs):
+    def get_metadata_embs(self, metadata):
+        feature_embs_list = []
+        if 'genre' in metadata:
+            genre_emb = self.doc_type_emb(torch.tensor(metadata['genre']).long().cuda())
+            feature_embs_list.append(genre_emb)
+        else:
+            feature_embs_list.append(torch.zeros(1, self.emb_size).long().cuda())
+
+        if 'last_action' in metadata:
+            last_action_idx = torch.tensor(metadata['last_action']).long().cuda()
+            last_action_emb = self.last_action_embeddings(last_action_idx)
+            feature_embs_list.append(last_action_emb)
+
+        feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
+        return feature_embs
+
+    def get_coref_new_scores(self, ment_boundary, query_vector, local_emb, event_subtype, feature_embs):
         # Repeat the query vector for comparison against all cells
         num_cells = self.mem_vectors.shape[0]
         rep_query_vector = query_vector.repeat(num_cells, 1)  # M x H
@@ -149,24 +166,12 @@ class BaseMemory(nn.Module):
         # Event Subtype
         event_type = get_event_type(event_subtype)
 
-        if self.use_srl and self.use_local_attention:
-            # Check that the vectors are different
-            assert (torch.max(torch.abs(query_vector - local_emb)) > 0)
-
         # Coref Score
         pair_vec = torch.cat([self.mem_vectors, rep_query_vector, self.mem_vectors * rep_query_vector,
                               feature_embs], dim=-1)
         pair_score = self.mem_coref_mlp(pair_vec)
 
-        coref_score = torch.squeeze(pair_score, dim=-1) + ment_score  # M
-
-        if self.use_srl or self.use_local_attention:
-            rep_query_vector = local_emb.repeat(num_cells, 1)  # M x H
-            # Coref Score
-            pair_vec = torch.cat([self.local_vectors, rep_query_vector, self.local_vectors * rep_query_vector,
-                                  feature_embs], dim=-1)
-            pair_score = self.local_coref_mlp(pair_vec)
-            coref_score += torch.squeeze(pair_score, dim=-1)
+        coref_score = torch.squeeze(pair_score, dim=-1)
 
         # Event type used for coreference mask
         coref_new_mask = torch.cat([self.get_coref_mask(ment_boundary, event_type), torch.tensor([1.0]).cuda()], dim=0)

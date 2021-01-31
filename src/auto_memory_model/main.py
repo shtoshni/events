@@ -43,10 +43,6 @@ def main():
                         help='Max span width.')
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
-    parser.add_argument('-ment_ordering', default='document', type=str,
-                        choices=['ment_type', 'document'],
-                        help='Order in which detected mentions are clustered. If ment_type, entity mentions are'
-                        'clustered before event mentions, otherwise mentions are ordered by their location in doc.')
 
     # Clustering variables
     parser.add_argument('-mem_type', default='unbounded', choices=['unbounded'],
@@ -87,7 +83,7 @@ def main():
                         default='cross_entropy', choices=['cross_entropy', 'diff'], type=str)
 
     parser.add_argument('-max_epochs',
-                        help='Maximum number of epochs', default=30, type=int)
+                        help='Maximum number of epochs', default=25, type=int)
     parser.add_argument('-seed', default=0,
                         help='Random seed to get different runs', type=int)
     parser.add_argument('-init_lr', help="Initial learning rate",
@@ -109,7 +105,7 @@ def main():
     opt_dict = OrderedDict()
     # Only include important options in hash computation
     imp_opts = ['model_size', 'pretrained_model', 'max_segment_len', 'use_local_attention',
-                'max_span_width', 'ment_emb', # 'ment_ordering',
+                'max_span_width', 'ment_emb',
                 'mem_type', 'mem_size', 'mlp_size',  # Memory params
                 'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',

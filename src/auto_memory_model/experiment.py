@@ -9,7 +9,7 @@ from collections import defaultdict, OrderedDict
 import numpy as np
 from transformers import get_linear_schedule_with_warmup, AdamW
 from copy import deepcopy
-from auto_memory_model.utils import action_sequences_to_clusters, classify_errors
+from auto_memory_model.utils import action_sequences_to_clusters
 from data_utils.utils import load_data
 from coref_utils.utils import get_mention_to_cluster
 from coref_utils.metrics import CorefEvaluator
@@ -267,16 +267,18 @@ class Experiment:
 
                 for example in data_iter:
                     loss, action_list, pred_mentions, gt_actions = model(deepcopy(example))
-                    for pred_action, gt_action in zip(action_list, gt_actions):
-                        pred_class_counter[pred_action[1]] += 1
-                        gt_class_counter[gt_action[1]] += 1
+                    from auto_memory_model.utils import linearize_actions
+                    gt_actions = linearize_actions(gt_actions)
+                    # for pred_action, gt_action in zip(action_list, gt_actions):
+                    #     pred_class_counter[pred_action[1]] += 1
+                    #     gt_class_counter[gt_action[1]] += 1
+                    #
+                    #     if tuple(pred_action) == tuple(gt_action):
+                    #         corr_actions += 1
+                    #
+                    # total_actions += len(action_list)
 
-                        if tuple(pred_action) == tuple(gt_action):
-                            corr_actions += 1
-
-                    total_actions += len(action_list)
-
-                    predicted_clusters = action_sequences_to_clusters(action_list, pred_mentions)
+                    predicted_clusters = action_sequences_to_clusters(action_list)
 
                     if split == "test":
                         doc_key = example['doc_key']
@@ -337,7 +339,8 @@ class Experiment:
                     coref_predictions[example["doc_key"]] = predicted_clusters
                     subtoken_maps[example["doc_key"]] = example["subtoken_map"]
 
-                    oracle_clusters = action_sequences_to_clusters(gt_actions, pred_mentions)
+                    oracle_clusters = action_sequences_to_clusters(gt_actions)
+                    # print(oracle_clusters)
                     oracle_clusters, mention_to_oracle = \
                         get_mention_to_cluster(oracle_clusters, threshold=self.cluster_threshold)
                     evaluator.update(predicted_clusters, gold_clusters,
@@ -353,8 +356,8 @@ class Experiment:
                     log_f.write(json.dumps(log_example) + "\n")
                     # break
 
-                logger.info(f"Ground Truth Actions: {gt_class_counter}")
-                logger.info(f"Predicted Actions: {pred_class_counter}")
+                # logger.info(f"Ground Truth Actions: {gt_class_counter}")
+                # logger.info(f"Predicted Actions: {pred_class_counter}")
 
                 # Print individual metrics
                 result_dict = OrderedDict()
@@ -373,8 +376,9 @@ class Experiment:
                 result_dict['fscore'] = round(fscore, 1)
                 logger.info("F-score: %.1f %s" % (fscore, perf_str))
 
-                logger.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
-                            (corr_actions / total_actions, oracle_evaluator.get_prf()[2]))
+                logger.info("Oracle F-score: %.3f" % (oracle_evaluator.get_prf()[2]))
+                # logger.info("Action accuracy: %.3f, Oracle F-score: %.3f" %
+                #             (corr_actions / total_actions, oracle_evaluator.get_prf()[2]))
                 if split == "test":
                     tbf_f.close()
                     logger.info(tbf_path)

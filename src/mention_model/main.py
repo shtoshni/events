@@ -29,7 +29,7 @@ def main():
     # Doc encoder
     parser.add_argument('-model_size', default='base', type=str, help='BERT model type')
     parser.add_argument('-pretrained_model', default="spanbert",
-                        type=str, help='Pretrained model name')
+                        type=str, help='SpanBERT model location')
     parser.add_argument('-max_segment_len', default=512, type=int,
                         help='Max segment length of BERT segments.')
     parser.add_argument('-add_speaker_tags', default=False, action='store_true',
@@ -63,7 +63,8 @@ def main():
                         help='Mutlitask learning with event type loss and event realis loss')
     parser.add_argument('-srl_loss_wt', help="SRL loss wt",
                         default=1.0, type=float)
-
+    parser.add_argument('-label_smoothing_wt', help="Label Smoothing",
+                        default=0.0, type=float)
     parser.add_argument('-init_lr', help="Initial learning rate",
                         default=5e-4, type=float)
     parser.add_argument('-ft_lr', help="Initial learning rate",

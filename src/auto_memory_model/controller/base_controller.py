@@ -45,16 +45,15 @@ class BaseController(nn.Module):
         self.other = nn.Module()
         self.other.span_width_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
         self.other.span_width_prior_embeddings = nn.Embedding(self.max_span_width, self.emb_size)
-        self.other.event_subtype_embeddings = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
+
         self.other.doc_type_embeddings = nn.Embedding(len(DOC_TYPES_TO_IDX), self.emb_size)
 
         self.other.mention_mlp = nn.ModuleDict()
 
-        for category, category_vals in zip(["event_subtype"], [EVENT_SUBTYPES]):
-            self.other.mention_mlp[category] = MLP(
-                input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
-                hidden_size=self.mlp_size, output_size=len(category_vals), num_hidden_layers=1,
-                bias=True, drop_module=self.drop_module)
+        self.other.mention_mlp = MLP(
+            input_size=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
+            hidden_size=self.mlp_size, output_size=1, num_hidden_layers=1,
+            bias=True, drop_module=self.drop_module)
 
         self.other.span_width_mlp = MLP(
             input_size=20, hidden_size=self.mlp_size,
@@ -73,7 +72,7 @@ class BaseController(nn.Module):
 
         return width_scores
 
-    def get_span_embeddings(self, doc_type, encoded_doc, ment_starts, ment_ends, subtoken_map, event_subtype=None):
+    def get_span_embeddings(self, doc_type, encoded_doc, ment_starts, ment_ends):
         span_emb_list = [encoded_doc[ment_starts, :], encoded_doc[ment_ends, :]]
 
         # Add span width embeddings
@@ -85,10 +84,6 @@ class BaseController(nn.Module):
         # Add doc type embedding
         doc_type_emb = torch.unsqueeze(self.other.doc_type_embeddings(torch.tensor(doc_type).long().cuda()), dim=0)
         span_emb_list.append(doc_type_emb.repeat(ment_ends.shape[0], 1))
-
-        if event_subtype is not None:
-            event_subtype_embs = self.other.event_subtype_embeddings(event_subtype)
-            span_emb_list.append(event_subtype_embs)
 
         if self.ment_emb == 'attn':
             num_words = encoded_doc.shape[0]  # T
@@ -108,33 +103,21 @@ class BaseController(nn.Module):
         return span_embs
 
     def get_gold_mentions(self, clusters, num_words, flat_cand_mask):
-        gold_ments_subtype = torch.zeros(num_words, self.max_span_width, len(EVENT_SUBTYPES)).cuda()
-        gold_ments_type = torch.zeros(num_words, self.max_span_width, len(EVENT_TYPES)).cuda()
-        gold_ments_realis = torch.zeros(num_words, self.max_span_width, len(REALIS_VALS)).cuda()
+        if self.training and self.label_smoothing_wt > 0.0:
+            gold_ments = self.label_smoothing_wt * torch.ones(num_words, self.max_span_width).cuda()
+        else:
+            gold_ments = torch.zeros(num_words, self.max_span_width).cuda()
 
         for cluster in clusters:
             for mention in cluster:
                 span_start, span_end, mention_info = mention
-                subtype_val = mention_info["subtype_val"]
-                type_val = mention_info["type_val"]
-                realis_val = mention_info["realis_val"]
 
                 span_width = span_end - span_start + 1
                 if span_width <= self.max_span_width:
                     span_width_idx = span_width - 1
-                    gold_ments_subtype[span_start, span_width_idx, subtype_val] = 1
-                    gold_ments_type[span_start, span_width_idx, type_val] = 1
-                    gold_ments_realis[span_start, span_width_idx, realis_val] = 1
+                    gold_ments[span_start, span_width_idx] = (1.0 - self.label_smoothing_wt if self.training else 1.0)
 
-        filt_gold_ments = {}
-        filt_gold_ments["event_subtype"] = gold_ments_subtype.reshape(-1, len(EVENT_SUBTYPES))[flat_cand_mask].float()
-        filt_gold_ments["event_type"] = gold_ments_type.reshape(-1, len(EVENT_TYPES))[flat_cand_mask].float()
-        filt_gold_ments["realis"] = gold_ments_realis.reshape(-1, len(REALIS_VALS))[flat_cand_mask].float()
-
-        # Filtering shouldn't remove gold mentions
-        assert(torch.sum(gold_ments_subtype) == torch.sum(filt_gold_ments["event_subtype"]))
-
-        return filt_gold_ments
+        return gold_ments.reshape(-1)[flat_cand_mask].float()
 
     def get_candidate_endpoints(self, encoded_doc, example):
         num_words = encoded_doc.shape[0]
@@ -160,21 +143,20 @@ class BaseController(nn.Module):
         filt_cand_ends = cand_ends.reshape(-1)[flat_cand_mask]  # (num_candidates,)
         return filt_cand_starts, filt_cand_ends, flat_cand_mask
 
-    def get_mention_logits_and_loss(self, example, encoded_doc, filt_cand_starts, filt_cand_ends, flat_cand_mask,
-                                    category="event_subtype"):
+    def get_mention_logits_and_loss(self, example, encoded_doc, filt_cand_starts, filt_cand_ends, flat_cand_mask):
         num_words = encoded_doc.shape[0]
         ment_pred_loss = None
 
         span_embs = self.get_span_embeddings(example["doc_type"], encoded_doc,
-                                             filt_cand_starts, filt_cand_ends, example["subtoken_map"])
+                                             filt_cand_starts, filt_cand_ends,)
         ment_width_scores = self.get_mention_width_scores(filt_cand_starts, filt_cand_ends, example["subtoken_map"])
 
-        mention_logits = torch.squeeze(self.other.mention_mlp[category](span_embs), dim=-1)
-        mention_logits += torch.unsqueeze(ment_width_scores, dim=-1)
+        mention_logits = torch.squeeze(self.other.mention_mlp(span_embs), dim=-1)
+        mention_logits += ment_width_scores
 
         if self.training:
             filt_gold_mentions = self.get_gold_mentions(example["clusters"], num_words, flat_cand_mask)
-            mention_loss = self.mention_loss_fn(mention_logits, filt_gold_mentions[category])
+            mention_loss = self.mention_loss_fn(mention_logits, filt_gold_mentions)
             total_weight = filt_cand_starts.shape[0]
 
             ment_pred_loss = mention_loss / total_weight
@@ -183,12 +165,9 @@ class BaseController(nn.Module):
 
     def get_top_k_spans(self, mention_logits, filt_cand_starts, filt_cand_ends, num_words):
         k = int(SPANS_TO_LEN_RATIO[self.dataset] * num_words)
-        num_ment_type = mention_logits.shape[1]  # Number of event subtypes
-        mention_logits = mention_logits.reshape(-1)
-        reshaped_topk_indices = torch.topk(mention_logits, k)[1]
+        reshaped_topk_indices = torch.topk(mention_logits.reshape(-1), k)[1]
 
-        topk_indices = reshaped_topk_indices // num_ment_type
-        topk_ment_type = reshaped_topk_indices % num_ment_type
+        topk_indices = reshaped_topk_indices
 
         topk_indices_mask = torch.zeros_like(mention_logits).cuda()
         topk_indices_mask[topk_indices] = 1
@@ -201,11 +180,11 @@ class BaseController(nn.Module):
         sort_scores = topk_starts + 1e-5 * topk_ends
         _, sorted_indices = torch.sort(sort_scores, dim=0)
 
-        sort_scores = topk_starts + 1e-5 * topk_ends + 1e-5 * topk_ment_type
+        sort_scores = topk_starts + 1e-5 * topk_ends
         _, sorted_indices = torch.sort(sort_scores, dim=0)
 
         return (topk_starts[sorted_indices], topk_ends[sorted_indices],
-                topk_scores[sorted_indices], topk_ment_type[sorted_indices])
+                topk_scores[sorted_indices])
 
     def get_pred_mentions(self, example, encoded_doc):
         filt_cand_starts, filt_cand_ends, flat_cand_mask = self.get_candidate_endpoints(encoded_doc, example)
@@ -213,20 +192,19 @@ class BaseController(nn.Module):
         ment_pred_loss, mention_logits = self.get_mention_logits_and_loss(
             example, encoded_doc, filt_cand_starts, filt_cand_ends, flat_cand_mask)
 
-        topk_starts, topk_ends, topk_scores, topk_ment_type = self.get_top_k_spans(
+        topk_starts, topk_ends, topk_scores = self.get_top_k_spans(
             mention_logits, filt_cand_starts, filt_cand_ends, encoded_doc.shape[0])
 
-        return ment_pred_loss, topk_starts, topk_ends, topk_scores, topk_ment_type
+        return ment_pred_loss, topk_starts, topk_ends, topk_scores
 
     def get_mention_embs_and_actions(self, example):
         encoding_outputs = self.doc_encoder(example)
         encoded_doc = encoding_outputs[0]
-        ment_pred_loss, pred_starts, pred_ends, pred_scores, pred_ment_type =\
+        ment_pred_loss, pred_starts, pred_ends, pred_scores =\
             self.get_pred_mentions(example, encoded_doc)
 
-        pred_mentions = list(zip(pred_starts.tolist(), pred_ends.tolist(), pred_ment_type.tolist()))
-        mention_embs = self.get_span_embeddings(example["doc_type"], encoded_doc, pred_starts, pred_ends,
-                                                example["subtoken_map"], event_subtype=pred_ment_type)
+        pred_mentions = list(zip(pred_starts.tolist(), pred_ends.tolist()))
+        mention_embs = self.get_span_embeddings(example["doc_type"], encoded_doc, pred_starts, pred_ends)
         mention_emb_list = torch.unbind(mention_embs, dim=0)
         pred_scores_list = torch.unbind(torch.unsqueeze(pred_scores, dim=1))
 
@@ -239,14 +217,6 @@ class BaseController(nn.Module):
 
         outputs = (ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, pred_scores_list)
 
-        if self.use_local_attention or self.use_srl:
-            local_embs = self.get_span_embeddings(example["doc_type"], encoding_outputs[1], pred_starts, pred_ends,
-                                                  example["subtoken_map"], event_subtype=pred_ment_type)
-            local_mention_emb_list = torch.unbind(local_embs, dim=0)
-            outputs = outputs + (local_mention_emb_list,)
-
-        if self.use_srl:
-            outputs = outputs + (encoding_outputs[-1],)
         return outputs
 
     def forward(self, example, teacher_forcing=False):
