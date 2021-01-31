@@ -134,7 +134,8 @@ class BaseMemory(nn.Module):
             last_action_emb = torch.unsqueeze(last_action_emb, dim=0).repeat(num_cells, 1)
             feature_embs_list.append(last_action_emb)
 
-        feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
+        # feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
+        feature_embs = torch.cat(feature_embs_list, dim=-1)
         return feature_embs
 
     def get_metadata_embs(self, metadata):

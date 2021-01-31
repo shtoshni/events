@@ -6,10 +6,9 @@ from kbp_2015_utils.utils import get_event_type
 from pytorch_utils.modules import MLP
 
 
-
-class UnboundedMemory(BaseMemory):
-    def __init__(self, **kwargs):
-        super(UnboundedMemory, self).__init__(**kwargs)
+class UnboundedRNNMemory(BaseMemory):
+    def __init__(self, rnn_size=50, **kwargs):
+        super(UnboundedRNNMemory, self).__init__(**kwargs)
         if self.use_mem_context:
             vec_size = self.mem_size
         else:
@@ -19,12 +18,11 @@ class UnboundedMemory(BaseMemory):
             self.mem_sim_mlp = MLP(self.mem_size + self.hsize + self.num_feats * self.emb_size, self.mlp_size, 1,
                                    num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
 
-        self.num_type_mlp = MLP(vec_size + self.hsize + 2 * self.emb_size + 1, self.mlp_size, output_size=4,
-                                num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
-
-        self.event_subtype_mlp = MLP(vec_size + self.hsize + 2 * self.emb_size, self.mlp_size,
-                                     output_size=len(EVENT_SUBTYPES), num_hidden_layers=self.mlp_depth, bias=True,
-                                     drop_module=self.drop_module)
+        self.rnn_size = rnn_size
+        self.proj_layer = MLP(vec_size + self.hsize + 2 * self.emb_size + 1, self.mlp_size, rnn_size)
+        self.event_subtype_rnn = torch.nn.GRUCell(rnn_size, rnn_size)
+        self.event_subtype_proj = nn.Linear(rnn_size, len(EVENT_SUBTYPES) + 1)
+        self.event_subtype_repr = nn.Embedding(len(EVENT_SUBTYPES), rnn_size)
 
         self.sim_softmax = nn.Softmax(dim=0)
 
@@ -49,24 +47,38 @@ class UnboundedMemory(BaseMemory):
         sim_vec = torch.sum(pair_sim * self.mem_vectors, dim=0)
         return sim_vec
 
-    def predict_num_types(self, ment_emb, mem_context, metadata_embs, ment_score):
+    def predict_event_types(self, ment_emb, mem_context, metadata_embs, ment_score, gt_event_subtypes, follow_gt):
         if self.use_mem_context:
             input_vec = torch.cat([ment_emb, mem_context, metadata_embs, ment_score], dim=0)
         else:
             input_vec = torch.cat([ment_emb, metadata_embs, ment_score], dim=0)
 
-        num_type_logit = self.num_type_mlp(input_vec)
-        return num_type_logit, torch.argmax(num_type_logit).item()
+        hidden_state = torch.unsqueeze(self.proj_layer(self.drop_module(input_vec)), dim=0)
+        input_state = torch.zeros(1, self.rnn_size).cuda()
 
-    def predict_types(self, ment_emb, mem_context, metadata_embs):
-        if self.use_mem_context:
-            input_vec = torch.cat([ment_emb, mem_context, metadata_embs], dim=0)
-        else:
-            input_vec = torch.cat([ment_emb, metadata_embs], dim=0)
+        if follow_gt and len(gt_event_subtypes) < 3:
+            gt_event_subtypes = gt_event_subtypes + [len(EVENT_SUBTYPES)]
 
-        event_subtype_logits = self.event_subtype_mlp(input_vec)
+        logit_list = []
+        all_event_subtype_list = []
+        event_subtype_list = []
+        for i in range(3):
+            hidden_state = self.event_subtype_rnn(input_state, hidden_state)
+            event_subtype_logit = self.event_subtype_proj(torch.squeeze(hidden_state, dim=0))
+            event_subtype = torch.argmax(event_subtype_logit).item()
+            if follow_gt:
+                event_subtype = gt_event_subtypes[i]
 
-        return event_subtype_logits
+            logit_list.append(event_subtype_logit)
+            all_event_subtype_list.append(event_subtype)
+
+            if event_subtype != len(EVENT_SUBTYPES):
+                event_subtype_list.append(event_subtype)
+                input_state = self.event_subtype_repr(torch.tensor([event_subtype]).long().cuda())
+            else:
+                break
+
+        return logit_list, all_event_subtype_list, event_subtype_list
 
     def interpret_scores(self, coref_new_scores, first_overwrite):
         if first_overwrite:
@@ -94,8 +106,8 @@ class UnboundedMemory(BaseMemory):
         sentence_map = example["sentence_map"]
         metadata = {'genre': example['doc_type']}
 
-        num_logit_list = []
         type_logit_list = []
+        type_list = []
         action_logit_list = []
         action_list = []  # argmax actions
         first_overwrite = True
@@ -121,31 +133,16 @@ class UnboundedMemory(BaseMemory):
                 mem_context = None
                 if self.use_mem_context:
                     mem_context = self.get_mem_context(raw_ment_emb, feature_embs)
-                num_type_logit, pred_num_types = self.predict_num_types(
-                    raw_ment_emb, mem_context, metadata_embs, ment_score)
 
-                gt_num_types = (0 if gt_action_list is None else len(gt_action_list))
-                # print (pred_num_types)
-                # print(gt_num_types - pred_num_types)
-                event_subtype_logits = self.predict_types(raw_ment_emb, mem_context, metadata_embs)
-
-                gt_ment_type_list = ([] if gt_action_list is None
+                gt_event_subtypes = ([] if gt_action_list is None
                                      else [gt_action[2][2] for gt_action in gt_action_list])
-                # print(gt_ment_type_list, gt_action_list)
-                if follow_gt:
-                    # Training - Operate over the ground truth
-                    event_subtypes = gt_ment_type_list
-                else:
-                    # Inference time
-                    if pred_num_types > 0:
-                        event_subtypes = sorted(torch.topk(event_subtype_logits, k=pred_num_types)[1].tolist())
-                    else:
-                        event_subtypes = []
+                logit_list, all_event_subtype_list, event_subtype_list = self.predict_event_types(
+                    raw_ment_emb, mem_context, metadata_embs, ment_score, gt_event_subtypes, follow_gt)
 
-                num_logit_list.append((gt_num_types, num_type_logit))
-                type_logit_list.append((gt_ment_type_list, event_subtype_logits))
+                type_logit_list.extend(logit_list)
+                type_list.extend(all_event_subtype_list)
 
-                for subtype_idx, event_subtype in enumerate(event_subtypes):
+                for subtype_idx, event_subtype in enumerate(event_subtype_list):
                     # print(event_subtype, gt_cell_idx, gt_action_str)
                     event_type = get_event_type(event_subtype)
                     feature_embs = self.get_feature_embs(ment_idx, sent_idx, metadata)
@@ -204,4 +201,4 @@ class UnboundedMemory(BaseMemory):
                             self.cluster_type = torch.cat([self.cluster_type, torch.tensor([event_type]).cuda()], dim=0)
                             self.last_mention_boundary.append(ment_boundary)
 
-        return num_logit_list, type_logit_list, action_logit_list, action_list
+        return type_logit_list, type_list, action_logit_list, action_list

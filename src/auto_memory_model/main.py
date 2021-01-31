@@ -47,10 +47,12 @@ def main():
                         type=str, help='If true use an RNN on top of mention embeddings.')
 
     # Clustering variables
-    parser.add_argument('-mem_type', default='unbounded', choices=['unbounded'],
+    parser.add_argument('-mem_type', default='unbounded', choices=['unbounded', 'unbounded_rnn'],
                         help="Memory type.")
     parser.add_argument('-mem_size', default=None, type=int,
                         help='Memory size used in the model')
+    parser.add_argument('-rnn_size', default=50, type=int,
+                        help='RNN size used in the unbounded rnn model')
     parser.add_argument('-mlp_size', default=1000, type=int,
                         help='MLP size used in the model')
     parser.add_argument('-no_use_doc_type', default=True, dest="use_doc_type", action="store_false",
@@ -104,12 +106,14 @@ def main():
     # Only include important options in hash computation
     imp_opts = ['model_size', 'pretrained_model', 'max_segment_len',
                 'max_span_width', 'ment_emb', 'top_span_ratio',
-                'mem_type', 'mem_size', 'mlp_size',  # Memory params
+                'mem_type', 'mem_size', 'mlp_size', # Memory params
                 'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
                 'num_train_docs', 'sample_invalid', 'max_training_segments', 'doc_proc',
                 "new_ent_wt", # Training params
                 ]
+    if args.mem_type == 'unbounded_rnn':
+        imp_opts.append('rnn_size')
 
     for key, val in vars(args).items():
         if key in imp_opts:
