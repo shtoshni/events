@@ -5,7 +5,6 @@ from collections import Counter, OrderedDict
 from document_encoder.independent import IndependentDocEncoder
 from pytorch_utils.modules import MLP
 from kbp_2015_utils.constants import EVENT_SUBTYPES, EVENT_TYPES, REALIS_VALS, DOC_TYPES_TO_IDX
-from auto_memory_model.constants import SPANS_TO_LEN_RATIO
 from data_utils.utils import get_clusters
 
 
@@ -15,28 +14,24 @@ class BaseController(nn.Module):
                  ment_emb='endpoint', ment_ordering='ment_type',
                  mlp_size=1000, emb_size=20,
                  sample_invalid=1.0, label_smoothing_wt=0.0,
-                 dataset='kbp_2015',  focus_group='both',
-                 use_local_attention=False, use_srl=False, srl_loss_wt=1.0,
+                 dataset='kbp_2015',  top_span_ratio=0.1,
                  **kwargs):
         super(BaseController, self).__init__()
         self.dataset = dataset
-        self.use_local_attention = use_local_attention
-        self.use_srl = use_srl
-        self.srl_loss_wt = srl_loss_wt
 
         self.ment_ordering = ment_ordering
         self.max_span_width = max_span_width
         self.sample_invalid = sample_invalid
         self.label_smoothing_wt = label_smoothing_wt
+        self.top_span_ratio = top_span_ratio
 
-        self.doc_encoder = IndependentDocEncoder(use_local_attention=use_local_attention, use_srl=use_srl, **kwargs)
+        self.doc_encoder = IndependentDocEncoder(**kwargs)
 
         self.hsize = self.doc_encoder.hsize
         self.mlp_size = mlp_size
         self.emb_size = emb_size
         self.drop_module = nn.Dropout(p=dropout_rate)
         self.ment_emb = ment_emb
-        self.focus_group = focus_group
         self.ment_emb_to_size_factor = {'attn': 3, 'endpoint': 2, 'max': 1}
 
         if self.ment_emb == 'attn':
@@ -164,7 +159,7 @@ class BaseController(nn.Module):
         return ment_pred_loss, mention_logits
 
     def get_top_k_spans(self, mention_logits, filt_cand_starts, filt_cand_ends, num_words):
-        k = int(SPANS_TO_LEN_RATIO[self.dataset] * num_words)
+        k = int(self.top_span_ratio * num_words)
         reshaped_topk_indices = torch.topk(mention_logits.reshape(-1), k)[1]
 
         topk_indices = reshaped_topk_indices

@@ -159,8 +159,6 @@ class Experiment:
             # Setup training
             model.train()
             np.random.shuffle(self.train_examples)
-            # errors = OrderedDict([("WL", 0), ("FN", 0), ("WF", 0),
-            #                       ("WO", 0), ("FL", 0), ("C", 0)])
             for cur_example in self.train_examples:
                 def handle_example(example):
                     self.train_info['global_steps'] += 1
@@ -168,9 +166,6 @@ class Experiment:
                     if output is None:
                         return None
                     loss = output[0]
-                    # batch_errors = classify_errors(pred_action_list, gt_actions)
-                    # for key in errors:
-                    #     errors[key] += batch_errors[key]
 
                     total_loss = loss['total']
                     if isinstance(total_loss, float):
@@ -269,14 +264,14 @@ class Experiment:
                     loss, action_list, pred_mentions, gt_actions = model(deepcopy(example))
                     from auto_memory_model.utils import linearize_actions
                     gt_actions = linearize_actions(gt_actions)
-                    # for pred_action, gt_action in zip(action_list, gt_actions):
-                    #     pred_class_counter[pred_action[1]] += 1
-                    #     gt_class_counter[gt_action[1]] += 1
-                    #
-                    #     if tuple(pred_action) == tuple(gt_action):
-                    #         corr_actions += 1
-                    #
-                    # total_actions += len(action_list)
+                    for pred_action, gt_action in zip(action_list, gt_actions):
+                        pred_class_counter[pred_action[1]] += 1
+                        gt_class_counter[gt_action[1]] += 1
+
+                        if tuple(pred_action) == tuple(gt_action):
+                            corr_actions += 1
+
+                    total_actions += len(action_list)
 
                     predicted_clusters = action_sequences_to_clusters(action_list)
 
@@ -356,8 +351,8 @@ class Experiment:
                     log_f.write(json.dumps(log_example) + "\n")
                     # break
 
-                # logger.info(f"Ground Truth Actions: {gt_class_counter}")
-                # logger.info(f"Predicted Actions: {pred_class_counter}")
+                logger.info(f"Ground Truth Actions: {gt_class_counter}")
+                logger.info(f"Predicted Actions: {pred_class_counter}")
 
                 # Print individual metrics
                 result_dict = OrderedDict()

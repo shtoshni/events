@@ -10,14 +10,19 @@ from pytorch_utils.modules import MLP
 class UnboundedMemory(BaseMemory):
     def __init__(self, **kwargs):
         super(UnboundedMemory, self).__init__(**kwargs)
+        if self.use_mem_context:
+            vec_size = self.mem_size
+        else:
+            vec_size = 0
 
-        self.mem_sim_mlp = MLP(self.mem_size + self.hsize + self.num_feats * self.emb_size, self.mlp_size, 1,
-                               num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
+        if self.use_mem_context:
+            self.mem_sim_mlp = MLP(self.mem_size + self.hsize + self.num_feats * self.emb_size, self.mlp_size, 1,
+                                   num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
 
-        self.num_type_mlp = MLP(self.mem_size + self.hsize + 2 * self.emb_size + 1, self.mlp_size, output_size=1,
+        self.num_type_mlp = MLP(vec_size + self.hsize + 2 * self.emb_size + 1, self.mlp_size, output_size=4,
                                 num_hidden_layers=self.mlp_depth, bias=True, drop_module=self.drop_module)
 
-        self.event_subtype_mlp = MLP(self.mem_size + self.hsize + 2 * self.emb_size, self.mlp_size,
+        self.event_subtype_mlp = MLP(vec_size + self.hsize + 2 * self.emb_size, self.mlp_size,
                                      output_size=len(EVENT_SUBTYPES), num_hidden_layers=self.mlp_depth, bias=True,
                                      drop_module=self.drop_module)
 
@@ -45,16 +50,30 @@ class UnboundedMemory(BaseMemory):
         sim_vec = torch.sum(pair_sim * self.mem_vectors, dim=0)
         return sim_vec
 
-    def predict_num_types(self, ment_emb, mem_context, metadata_embs, ment_score):
-        input_vec = torch.cat([ment_emb, mem_context, metadata_embs, ment_score], dim=0)
-        num_type_logit = self.num_type_mlp(input_vec)
-        num_types_cont = 3 * torch.sigmoid(num_type_logit)
-        # num_type_logit[0] -= ment_score
+    # def predict_num_types(self, ment_emb, mem_context, metadata_embs, ment_score):
+    #     input_vec = torch.cat([ment_emb, mem_context, metadata_embs, ment_score], dim=0)
+    #     num_type_logit = self.num_type_mlp(input_vec)
+    #     num_types_cont = 3 * torch.sigmoid(num_type_logit)
+    #     # num_type_logit[0] -= ment_score
+    #
+    #     return num_types_cont, int(torch.round(num_types_cont).item())
 
-        return num_types_cont, int(torch.round(num_types_cont).item())
+    def predict_num_types(self, ment_emb, mem_context, metadata_embs, ment_score):
+        if self.use_mem_context:
+            input_vec = torch.cat([ment_emb, mem_context, metadata_embs, ment_score], dim=0)
+        else:
+            input_vec = torch.cat([ment_emb, metadata_embs, ment_score], dim=0)
+
+        num_type_logit = self.num_type_mlp(input_vec)
+
+        return num_type_logit, torch.argmax(num_type_logit).item()  #int(torch.round(num_types_cont).item())
 
     def predict_types(self, ment_emb, mem_context, metadata_embs):
-        input_vec = torch.cat([ment_emb, mem_context, metadata_embs], dim=0)
+        if self.use_mem_context:
+            input_vec = torch.cat([ment_emb, mem_context, metadata_embs], dim=0)
+        else:
+            input_vec = torch.cat([ment_emb, metadata_embs], dim=0)
+
         event_subtype_logits = self.event_subtype_mlp(input_vec)
 
         return event_subtype_logits
@@ -109,11 +128,14 @@ class UnboundedMemory(BaseMemory):
                 # (b) Training and the mention is not an invalid or
                 # (c) Training and mention is an invalid mention and randomly sampled float is less than invalid
                 # sampling probability
-                mem_context = self.get_mem_context(raw_ment_emb, feature_embs)
+                mem_context = None
+                if self.use_mem_context:
+                    mem_context = self.get_mem_context(raw_ment_emb, feature_embs)
                 num_type_logit, pred_num_types = self.predict_num_types(
                     raw_ment_emb, mem_context, metadata_embs, ment_score)
 
                 gt_num_types = (0 if gt_action_list is None else len(gt_action_list))
+                # print (pred_num_types)
                 # print(gt_num_types - pred_num_types)
                 event_subtype_logits = self.predict_types(raw_ment_emb, mem_context, metadata_embs)
 
@@ -133,11 +155,8 @@ class UnboundedMemory(BaseMemory):
                 num_logit_list.append((gt_num_types, num_type_logit))
                 type_logit_list.append((gt_ment_type_list, event_subtype_logits))
 
-                # print(event_subtypes, self.mem_vectors.shape[0])
                 for subtype_idx, event_subtype in enumerate(event_subtypes):
-
                     # print(event_subtype, gt_cell_idx, gt_action_str)
-
                     event_type = get_event_type(event_subtype)
                     feature_embs = self.get_feature_embs(ment_idx, sent_idx, metadata)
                     ment_emb = torch.cat([
@@ -153,22 +172,18 @@ class UnboundedMemory(BaseMemory):
                         action_logit_list.append((coref_new_scores, gt_cell_idx, gt_action_str))
                         action_str = gt_action_str
                         cell_idx = gt_cell_idx
-
-                    action_list.append((pred_cell_idx, pred_action_str, (span_start, span_end, event_subtype)))
-
-                    if not follow_gt:
+                    else:
                         # Inference time
                         action_str = pred_action_str
                         cell_idx = pred_cell_idx
 
                     last_action_str = action_str
+                    action_list.append((pred_cell_idx, pred_action_str, (span_start, span_end, event_subtype)))
 
                     if first_overwrite and action_str == 'o':
                         first_overwrite = False
                         # We start with a single empty memory cell
                         self.mem_vectors = torch.unsqueeze(ment_emb, dim=0)
-                        if self.use_srl or self.use_local_attention:
-                            self.local_vectors = torch.unsqueeze(local_emb, dim=0)
                         self.ent_counter = torch.tensor([1.0]).cuda()
                         self.last_mention_idx[0] = ment_idx
                         self.last_sent_idx[0] = sent_idx

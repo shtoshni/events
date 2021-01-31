@@ -25,7 +25,7 @@ def main():
                         help='Root folder storing model runs', type=str)
     parser.add_argument(
         '-dataset', default='kbp_2015', choices=['kbp_2015'], type=str)
-    parser.add_argument('-doc_proc', default='srl', choices=['bertsrl', 'srl', 'cleaned', 'orig'], type=str)
+    parser.add_argument('-doc_proc', default='cleaned', choices=['cleaned', 'orig'], type=str)
 
     parser.add_argument('-model_size', default='base', type=str,
                         help='BERT model type')
@@ -41,6 +41,8 @@ def main():
     # Mention variables
     parser.add_argument('-max_span_width', default=4, type=int,
                         help='Max span width.')
+    parser.add_argument('-top_span_ratio', default=0.1, type=float,
+                        help='Fraction of top spans.')
     parser.add_argument('-ment_emb', default='attn', choices=['attn', 'endpoint'],
                         type=str, help='If true use an RNN on top of mention embeddings.')
 
@@ -53,10 +55,10 @@ def main():
                         help='MLP size used in the model')
     parser.add_argument('-no_use_doc_type', default=True, dest="use_doc_type", action="store_false",
                         help="If true, document type is used during clustering.")
-    parser.add_argument('-use_srl', default=False, action="store_true",
-                        help='Use SRL guided attention.')
     parser.add_argument('-no_use_ment_type', default=True, dest="use_ment_type", action="store_false",
                         help="If true, mentions are only merged with clusters of the same mention type.")
+    parser.add_argument('-no_use_mem_context', default=True, dest="use_mem_context", action="store_false",
+                        help="If true, use memory context.")
     parser.add_argument('-entity_rep', default='wt_avg', type=str,
                         choices=['learned_avg', 'wt_avg'], help='Entity representation.')
     parser.add_argument('-emb_size', default=20, type=int,
@@ -77,10 +79,6 @@ def main():
                         help='Dropout rate')
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.0, type=float)
-    parser.add_argument('-srl_loss_wt', help="SRL loss wt",
-                        default=1.0, type=float)
-    parser.add_argument('-srl_loss_type', help="SRL loss type",
-                        default='cross_entropy', choices=['cross_entropy', 'diff'], type=str)
 
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=25, type=int)
@@ -104,17 +102,14 @@ def main():
     # Get model directory name
     opt_dict = OrderedDict()
     # Only include important options in hash computation
-    imp_opts = ['model_size', 'pretrained_model', 'max_segment_len', 'use_local_attention',
-                'max_span_width', 'ment_emb',
+    imp_opts = ['model_size', 'pretrained_model', 'max_segment_len',
+                'max_span_width', 'ment_emb', 'top_span_ratio',
                 'mem_type', 'mem_size', 'mlp_size',  # Memory params
-                'use_srl',  'use_ment_type', 'use_doc_type',  # Clustering params
+                'use_ment_type', 'use_doc_type',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
                 'num_train_docs', 'sample_invalid', 'max_training_segments', 'doc_proc',
-                "new_ent_wt", "srl_loss_wt",  # Training params
+                "new_ent_wt", # Training params
                 ]
-
-    if args.use_srl:
-        imp_opts.append('srl_loss_type')
 
     for key, val in vars(args).items():
         if key in imp_opts:

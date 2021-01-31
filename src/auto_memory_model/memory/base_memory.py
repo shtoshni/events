@@ -13,13 +13,12 @@ class BaseMemory(nn.Module):
     def __init__(self, hsize=300, mlp_size=200, mlp_depth=1, drop_module=None,
                  emb_size=20, entity_rep='max', dataset='kbp_2015', sample_invalid=1.0,
                  use_ment_type=False, use_doc_type=False,
-                 use_srl=False, use_local_attention=False,
+                 use_mem_context=True,
                  **kwargs):
         super(BaseMemory, self).__init__()
         self.dataset = dataset
 
-        self.use_srl = use_srl
-        self.use_local_attention = use_local_attention
+        self.use_mem_context = use_mem_context
 
         self.sample_invalid = sample_invalid
         self.use_ment_type = use_ment_type
@@ -46,10 +45,6 @@ class BaseMemory(nn.Module):
 
         self.mem_coref_mlp = MLP(3 * self.mem_size + self.num_feats * self.emb_size, self.mlp_size, 1,
                                  num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
-
-        if self.use_srl or self.use_local_attention:
-            self.local_coref_mlp = MLP(3 * self.mem_size + self.num_feats * self.emb_size, self.mlp_size, 1,
-                                       num_hidden_layers=mlp_depth, bias=True, drop_module=drop_module)
 
         if self.entity_rep == 'learned_avg':
             self.alpha = MLP(2 * self.mem_size, 300, 1, num_hidden_layers=1, bias=True, drop_module=drop_module)
@@ -186,16 +181,9 @@ class BaseMemory(nn.Module):
                 self.alpha(torch.cat([self.mem_vectors[cell_idx, :], query_vector], dim=0)))
             avg_pool_vec = alpha_wt * self.mem_vectors[cell_idx, :] + (1 - alpha_wt) * query_vector
             self.mem_vectors = self.mem_vectors * (1 - mask) + mask * torch.unsqueeze(avg_pool_vec, dim=0)
-            if self.use_srl or self.use_local_attention:
-                avg_pool_vec = alpha_wt * self.local_vectors[cell_idx, :] + (1 - alpha_wt) * local_emb
-                self.local_vectors = self.local_vectors * (1 - mask) + mask * torch.unsqueeze(avg_pool_vec, dim=0)
         else:
             total_counts = torch.unsqueeze((self.ent_counter + 1).float(), dim=1)
             pool_vec_num = self.mem_vectors * torch.unsqueeze(self.ent_counter, dim=1) + query_vector
             avg_pool_vec = pool_vec_num / total_counts
             self.mem_vectors = self.mem_vectors * (1 - mask) + mask * avg_pool_vec
-            if self.use_srl or self.use_local_attention:
-                pool_vec_num = self.local_vectors * torch.unsqueeze(self.ent_counter, dim=1) + local_emb
-                avg_pool_vec = pool_vec_num / total_counts
-                self.local_vectors = self.local_vectors * (1 - mask) + mask * avg_pool_vec
 

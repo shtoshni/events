@@ -67,7 +67,6 @@ class UnboundedMemController(BaseController):
         total_terms = 0.0
 
         # First filter the action tuples to sample invalid
-        # print(action_tuple_list)
         for idx, (coref_new_scores, cell_idx, action_str) in enumerate(action_prob_list):
             gt_idx = None
             if action_str == 'c':
@@ -83,11 +82,6 @@ class UnboundedMemController(BaseController):
             weight = torch.ones_like(coref_new_scores).float().cuda()
             weight[-1] = self.new_ent_wt
 
-            # if self.training:
-            #     label_smoothing_fn = LabelSmoothingLoss(smoothing=self.label_smoothing_wt, dim=0)
-            # else:
-            #     label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
-
             label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
             # loss_fn = nn.CrossEntropyLoss(weight=weight)
             coref_loss += label_smoothing_fn(coref_new_scores, target, weight)
@@ -95,33 +89,27 @@ class UnboundedMemController(BaseController):
 
         return coref_loss
 
-    # def get_num_type_loss(self, num_logit_list):
-    #     gt_num_type_list, num_type_logit_list = zip(*num_logit_list)
-    #     # for gt_num_types, num_type_logit in num_logit_list:
-    #     if self.training:
-    #         label_smoothing_fn = LabelSmoothingLoss(smoothing=self.label_smoothing_wt, dim=1)
-    #     else:
-    #         label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=1)
-    #
-    #     num_type_loss = label_smoothing_fn(pred=torch.stack(num_type_logit_list),
-    #                                        target=torch.unsqueeze(torch.tensor(gt_num_type_list).cuda(), dim=1))
-    #
-    #     return num_type_loss
-
     def get_num_type_loss(self, num_logit_list):
         gt_num_type_list, num_type_logit_list = zip(*num_logit_list)
         # for gt_num_types, num_type_logit in num_logit_list:
+        if self.training:
+            label_smoothing_fn = LabelSmoothingLoss(smoothing=self.label_smoothing_wt, dim=1)
+        else:
+            label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=1)
 
-        pred = torch.stack(num_type_logit_list)
-        # print(pred)
-        target = torch.tensor(gt_num_type_list).cuda()
-
-        num_type_loss = torch.norm(pred - target) / (pred.shape[0] + 1e-10)
-
-        # num_type_loss = label_smoothing_fn(pred=torch.stack(num_type_logit_list),
-        #                                    target=torch.unsqueeze(torch.tensor(gt_num_type_list).cuda(), dim=1))
+        num_type_loss = label_smoothing_fn(pred=torch.stack(num_type_logit_list),
+                                           target=torch.unsqueeze(torch.tensor(gt_num_type_list).cuda(), dim=1))
 
         return num_type_loss
+
+    # def get_num_type_loss(self, num_logit_list):
+    #     gt_num_type_list, num_type_logit_list = zip(*num_logit_list)
+    #
+    #     pred = torch.stack(num_type_logit_list)
+    #     target = torch.tensor(gt_num_type_list).cuda()
+    #
+    #     num_type_loss = torch.norm(pred - target) / (pred.shape[0] + 1e-10)
+    #     return num_type_loss
 
     def get_event_subtype_loss(self, type_logit_list):
         event_subtype_loss = 0.0
@@ -165,8 +153,8 @@ class UnboundedMemController(BaseController):
                 loss['coref'] = coref_loss
                 loss['total'] += loss['coref']
 
-                # if ment_pred_loss is not None:
-                #     loss['total'] += ment_pred_loss
+                if ment_pred_loss is not None:
+                    loss['total'] += ment_pred_loss
 
             return loss, action_list, pred_mentions, gt_actions
         else:
