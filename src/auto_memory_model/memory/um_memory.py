@@ -66,7 +66,7 @@ class UnboundedMemory(BaseMemory):
 
         num_type_logit = self.num_type_mlp(input_vec)
 
-        return num_type_logit, torch.argmax(num_type_logit).item()  #int(torch.round(num_types_cont).item())
+        return num_type_logit, torch.argmax(num_type_logit).item()
 
     def predict_types(self, ment_emb, mem_context, metadata_embs):
         if self.use_mem_context:
