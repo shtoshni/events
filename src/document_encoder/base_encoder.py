@@ -1,7 +1,7 @@
 import torch.nn as nn
 from os import path
 from transformers import BertModel, BertTokenizer, AutoModel, BertConfig
-from transformers.modeling_bert import BertLayer
+from transformers import BertLayer
 from kbp_2015_utils.constants import SPEAKER_TAGS
 
 
