@@ -12,8 +12,8 @@ def get_mention_model_name(args):
     model_name_suffix += 'segments_3_'  # + f'{args.max_training_segments}' + '_'
     model_name_suffix += 'width_' + f'{args.max_span_width}' + '_'
 
-    if args.dropout_rate != 0.5:
-        model_name_suffix += f'drop_{args.dropout_rate}'
+    # if args.dropout_rate != 0.5:
+    #     model_name_suffix += f'drop_{args.dropout_rate}'
 
     if not args.add_speaker_tags:
         model_name_suffix += 'no_speaker_'

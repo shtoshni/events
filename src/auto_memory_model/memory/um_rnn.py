@@ -20,9 +20,9 @@ class UnboundedRNNMemory(BaseMemory):
 
         self.rnn_size = rnn_size
         self.proj_layer = MLP(vec_size + self.hsize + 2 * self.emb_size + 1, self.mlp_size, rnn_size)
-        self.event_subtype_rnn = torch.nn.GRUCell(rnn_size, rnn_size)
+        self.event_subtype_rnn = torch.nn.GRUCell(hidden_size=rnn_size, input_size=self.emb_size)
         self.event_subtype_proj = nn.Linear(rnn_size, len(EVENT_SUBTYPES) + 1)
-        self.event_subtype_repr = nn.Embedding(len(EVENT_SUBTYPES), rnn_size)
+        # self.event_subtype_repr = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
 
         self.sim_softmax = nn.Softmax(dim=0)
 
@@ -54,7 +54,7 @@ class UnboundedRNNMemory(BaseMemory):
             input_vec = torch.cat([ment_emb, metadata_embs, ment_score], dim=0)
 
         hidden_state = torch.unsqueeze(self.proj_layer(self.drop_module(input_vec)), dim=0)
-        input_state = torch.zeros(1, self.rnn_size).cuda()
+        input_state = torch.zeros(1, self.emb_size).cuda()
 
         if follow_gt and len(gt_event_subtypes) < 3:
             gt_event_subtypes = gt_event_subtypes + [len(EVENT_SUBTYPES)]
@@ -74,7 +74,7 @@ class UnboundedRNNMemory(BaseMemory):
 
             if event_subtype != len(EVENT_SUBTYPES):
                 event_subtype_list.append(event_subtype)
-                input_state = self.event_subtype_repr(torch.tensor([event_subtype]).long().cuda())
+                input_state = self.event_subtype_embeddings(torch.tensor([event_subtype]).long().cuda())
             else:
                 break
 

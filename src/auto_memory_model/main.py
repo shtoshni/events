@@ -35,8 +35,6 @@ def main():
                         help='Max segment length of BERT segments.')
     parser.add_argument('-add_speaker_tags', default=False, action='store_true',
                         help='Whether to add speaker tags to document or not.')
-    parser.add_argument('-use_local_attention', default=False, action="store_true",
-                        help='Local Attention on top of BERT embeddings.')
 
     # Mention variables
     parser.add_argument('-max_span_width', default=4, type=int,
@@ -69,8 +67,6 @@ def main():
     # Training params
     parser.add_argument('-new_ent_wt', help='Weight of new entity term in coref loss',
                         default=1.0, type=float)
-    parser.add_argument('-over_loss_wt', help='Weight of overwrite loss',
-                        default=1.0, type=float)
     parser.add_argument('-sample_invalid', help='Sample invalids during training',
                         default=0.2, type=float)
     parser.add_argument('-num_train_docs', default=None, type=int,
@@ -81,6 +77,8 @@ def main():
                         help='Dropout rate')
     parser.add_argument('-label_smoothing_wt', help='Weight of label smoothing',
                         default=0.0, type=float)
+    parser.add_argument('-event_subtype_loss_wt', help='Weight of event subtype loss',
+                        default=1.0, type=float)
 
     parser.add_argument('-max_epochs',
                         help='Maximum number of epochs', default=25, type=int)
@@ -107,10 +105,10 @@ def main():
     imp_opts = ['model_size', 'pretrained_model', 'max_segment_len',
                 'max_span_width', 'ment_emb', 'top_span_ratio',
                 'mem_type', 'mem_size', 'mlp_size', # Memory params
-                'use_ment_type', 'use_doc_type',  # Clustering params
+                'use_ment_type', 'use_doc_type',  'use_mem_context',  # Clustering params
                 'max_epochs', 'dropout_rate', 'seed', 'init_lr', 'finetune', 'ft_lr', 'label_smoothing_wt',
                 'num_train_docs', 'sample_invalid', 'max_training_segments', 'doc_proc',
-                "new_ent_wt", # Training params
+                "new_ent_wt", 'event_subtype_loss_wt',  # Training params
                 ]
     if args.mem_type == 'unbounded_rnn':
         imp_opts.append('rnn_size')

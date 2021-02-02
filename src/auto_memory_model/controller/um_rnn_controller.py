@@ -9,10 +9,11 @@ from pytorch_utils.label_smoothing import LabelSmoothingLoss
 
 
 class UnboundedRNNMemController(BaseController):
-    def __init__(self, new_ent_wt=1.0, over_loss_wt=1.0, **kwargs):
+    def __init__(self, new_ent_wt=1.0, over_loss_wt=1.0, event_subtype_loss_wt=1.0, **kwargs):
         super(UnboundedRNNMemController, self).__init__(**kwargs)
         self.new_ent_wt = new_ent_wt
         self.over_loss_wt = over_loss_wt
+        self.event_subtype_loss_wt = event_subtype_loss_wt
 
         self.memory_net = UnboundedRNNMemory(
             hsize=self.ment_emb_to_size_factor[self.ment_emb] * self.hsize + 2 * self.emb_size,
@@ -120,7 +121,7 @@ class UnboundedRNNMemController(BaseController):
         loss = {'total': 0}
         if follow_gt:
             loss['event_subtype'] = self.get_event_subtype_loss(type_logit_list, type_list)
-            loss['total'] += loss['event_subtype']
+            loss['total'] += loss['event_subtype'] * self.event_subtype_loss_wt
 
             if len(action_prob_list) > 0:
                 coref_loss = self.calculate_coref_loss(action_prob_list)
