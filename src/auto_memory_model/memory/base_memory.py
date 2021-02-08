@@ -154,7 +154,7 @@ class BaseMemory(nn.Module):
         feature_embs = self.drop_module(torch.cat(feature_embs_list, dim=-1))
         return feature_embs
 
-    def get_coref_new_scores(self, ment_boundary, query_vector, local_emb, event_subtype, feature_embs):
+    def get_coref_new_scores(self, ment_boundary, query_vector, local_emb, event_subtype, ment_score, feature_embs):
         # Repeat the query vector for comparison against all cells
         num_cells = self.mem_vectors.shape[0]
         rep_query_vector = query_vector.repeat(num_cells, 1)  # M x H
@@ -167,7 +167,7 @@ class BaseMemory(nn.Module):
                               feature_embs], dim=-1)
         pair_score = self.mem_coref_mlp(pair_vec)
 
-        coref_score = torch.squeeze(pair_score, dim=-1)
+        coref_score = torch.squeeze(pair_score, dim=-1) # + ment_score  # M
 
         # Event type used for coreference mask
         coref_new_mask = torch.cat([self.get_coref_mask(ment_boundary, event_type), torch.tensor([1.0]).cuda()], dim=0)

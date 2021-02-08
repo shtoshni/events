@@ -154,6 +154,7 @@ class Experiment:
             return
 
         for epoch in range(epochs_done, max_epochs):
+            random_threshold = max(0.8, 1.0 - (epoch + 1)/max_epochs)
             logger.info("\n\nStart Epoch %d" % (epoch + 1))
             start_time = time.time()
             # Setup training
@@ -162,11 +163,11 @@ class Experiment:
             for cur_example in self.train_examples:
                 def handle_example(example):
                     self.train_info['global_steps'] += 1
-                    output = model(deepcopy(example))
+                    output = model(deepcopy(example), random_threshold=random_threshold)
                     if output is None:
                         return None
                     loss = output[0]
-
+                    # print(loss)
                     total_loss = loss['total']
                     if isinstance(total_loss, float):
                         print(f"Weird thing - {total_loss}")
@@ -221,7 +222,10 @@ class Experiment:
                 self.save_model(self.best_model_path, model_type='best')
 
             # Save last model - but don't do it too frequently (saves time)
-            if self.train_info['epoch'] % 10 == 0:
+            if self.slurm_id:
+                if self.train_info['epoch'] % 10 == 0:
+                    self.save_model(self.model_path)
+            else:
                 self.save_model(self.model_path)
 
             # Get elapsed time
@@ -262,8 +266,8 @@ class Experiment:
 
                 for example in data_iter:
                     loss, action_list, pred_mentions, gt_actions = model(deepcopy(example))
-                    from auto_memory_model.utils import linearize_actions
-                    gt_actions = linearize_actions(gt_actions)
+                    # from auto_memory_model.utils import linearize_actions
+                    # gt_actions = linearize_actions(gt_actions)
                     for pred_action, gt_action in zip(action_list, gt_actions):
                         pred_class_counter[pred_action[1]] += 1
                         gt_class_counter[gt_action[1]] += 1

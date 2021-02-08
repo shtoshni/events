@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from auto_memory_model.memory.um_rnn import UnboundedRNNMemory
+from auto_memory_model.memory.um_rnn_memory import UnboundedRNNMemory
 from auto_memory_model.controller.base_controller import BaseController
 from coref_utils.utils import get_mention_to_cluster_idx
 from pytorch_utils.label_smoothing import LabelSmoothingLoss
@@ -23,6 +23,7 @@ class UnboundedRNNMemController(BaseController):
         # Set loss functions
         self.cross_entropy_fn = nn.CrossEntropyLoss(reduce='sum')
         # self.cross_entropy_fn = nn.CrossEntropyLoss()
+        self.label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
         self.bce_fn = nn.BCEWithLogitsLoss()
 
     @staticmethod
@@ -64,11 +65,10 @@ class UnboundedRNNMemController(BaseController):
     def calculate_coref_loss(self, action_prob_list):
         num_cells = 0
         coref_loss = 0.0
-        target_list = []
         total_terms = 0.0
 
         # First filter the action tuples to sample invalid
-        for idx, (coref_new_scores, cell_idx, action_str) in enumerate(action_prob_list):
+        for idx, (coref_new_scores,  _, cell_idx, action_str) in enumerate(action_prob_list):
             gt_idx = None
             if action_str == 'c':
                 gt_idx = cell_idx
@@ -76,19 +76,44 @@ class UnboundedRNNMemController(BaseController):
                 # Overwrite
                 gt_idx = (1 if num_cells == 0 else num_cells)
                 num_cells += 1
+            elif action_str == 'i':
+                # # Invalid
+                gt_idx = (1 if num_cells == 0 else num_cells)
 
             target = torch.tensor([gt_idx]).cuda()
-            target_list.append(target)
 
             weight = torch.ones_like(coref_new_scores).float().cuda()
             weight[-1] = self.new_ent_wt
 
             label_smoothing_fn = LabelSmoothingLoss(smoothing=0.0, dim=0)
-            # loss_fn = nn.CrossEntropyLoss(weight=weight)
             coref_loss += label_smoothing_fn(coref_new_scores, target, weight)
             total_terms += 1
 
         return coref_loss
+
+    @staticmethod
+    def calculate_over_ign_loss(action_prob_list):
+        target_list = []
+        scores_list = []
+        for idx, (_,  over_ign_scores, cell_idx, action_str) in enumerate(action_prob_list):
+            if action_str == 'c':
+                # action_indices.append(-100)
+                continue
+            elif action_str == 'o':
+                target_list.append(0)
+                scores_list.append(over_ign_scores)
+            elif action_str == 'i':
+                # Not a mention
+                target_list.append(1)
+                scores_list.append(over_ign_scores)
+
+        scores_tens = torch.stack(scores_list)
+        gt_indices = torch.tensor(target_list).cuda()
+
+        # print(gt_indices.shape, scores_tens.shape)
+
+        over_loss = nn.CrossEntropyLoss(reduce='sum')(scores_tens, gt_indices)
+        return over_loss
 
     @staticmethod
     def get_event_subtype_loss(type_logit_list, type_list):
@@ -99,12 +124,12 @@ class UnboundedRNNMemController(BaseController):
 
         return event_subtype_loss
 
-    def forward(self, example, teacher_forcing=False):
+    def forward(self, example, teacher_forcing=False, random_threshold=1.0):
         """
         Encode a batch of excerpts.
         """
         outputs = self.get_mention_embs_and_actions(example)
-        ment_pred_loss, pred_mentions, gt_actions, mention_emb_list, mention_score_list = outputs[:5]
+        ment_pred_loss, pred_mentions, _, mention_emb_list, mention_score_list = outputs[:5]
 
         local_emb_list = [None] * len(mention_emb_list)
 
@@ -113,9 +138,14 @@ class UnboundedRNNMemController(BaseController):
         if teacher_forcing:
             rand_fl_list = np.zeros_like(rand_fl_list)
 
-        type_logit_list, type_list, action_prob_list, action_list = self.memory_net(
-            example, mention_emb_list, local_emb_list, mention_score_list, pred_mentions, gt_actions, rand_fl_list,
-            teacher_forcing=teacher_forcing)
+        from coref_utils.utils import get_mention_to_cluster_idx
+        from data_utils.utils import get_clusters
+        clusters = get_clusters(example["clusters"], key="subtype_val")
+        mention_to_cluster = get_mention_to_cluster_idx(clusters)
+
+        type_logit_list, type_list, action_prob_list, action_list, gt_actions = self.memory_net(
+            example, mention_emb_list, local_emb_list, mention_score_list, pred_mentions, mention_to_cluster,
+            rand_fl_list, teacher_forcing=teacher_forcing, random_threshold=random_threshold)
 
         coref_loss = 0.0
         loss = {'total': 0}
@@ -124,9 +154,9 @@ class UnboundedRNNMemController(BaseController):
             loss['total'] += loss['event_subtype'] * self.event_subtype_loss_wt
 
             if len(action_prob_list) > 0:
-                coref_loss = self.calculate_coref_loss(action_prob_list)
-                loss['coref'] = coref_loss
-                loss['total'] += loss['coref']
+                loss['coref'] = self.calculate_coref_loss(action_prob_list)
+                loss['over'] = self.calculate_over_ign_loss(action_prob_list)
+                loss['total'] += (loss['coref'] + loss['over'])
 
                 if ment_pred_loss is not None:
                     loss['total'] += ment_pred_loss
