@@ -154,7 +154,7 @@ class Experiment:
             return
 
         for epoch in range(epochs_done, max_epochs):
-            random_threshold = max(0.8, 1.0 - (epoch + 1)/max_epochs)
+            random_threshold = max(0.5, 1.0 - (epoch + 1)/max_epochs)
             logger.info("\n\nStart Epoch %d" % (epoch + 1))
             start_time = time.time()
             # Setup training
@@ -225,8 +225,8 @@ class Experiment:
             if self.slurm_id:
                 if self.train_info['epoch'] % 10 == 0:
                     self.save_model(self.model_path)
-            else:
-                self.save_model(self.model_path)
+            # else:
+            #     self.save_model(self.model_path)
 
             # Get elapsed time
             elapsed_time = time.time() - start_time

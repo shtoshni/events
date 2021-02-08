@@ -21,7 +21,7 @@ class UnboundedRNNMemory(BaseMemory):
         self.rnn_size = rnn_size
         self.proj_layer = MLP(vec_size + self.hsize + 2 * self.emb_size + 1, self.mlp_size, rnn_size)
         self.event_subtype_rnn = torch.nn.GRUCell(hidden_size=rnn_size, input_size=self.emb_size)
-        self.event_subtype_proj = nn.Linear(rnn_size, len(EVENT_SUBTYPES) + 1)
+        self.event_subtype_proj = nn.Linear(rnn_size, self.emb_size)
         # self.event_subtype_repr = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
 
         self.sim_softmax = nn.Softmax(dim=0)
@@ -66,6 +66,10 @@ class UnboundedRNNMemory(BaseMemory):
         for i in range(3):
             hidden_state = self.event_subtype_rnn(input_state, hidden_state)
             event_subtype_logit = self.event_subtype_proj(torch.squeeze(hidden_state, dim=0))
+            event_subtype_logit = torch.cat([
+                torch.sum(self.event_subtype_embeddings.weight * event_subtype_logit, dim=1),
+                torch.tensor([0.0]).cuda()], dim=0
+            )
             pred_event_subtype = torch.argmax(event_subtype_logit).item()
 
             logit_list.append(event_subtype_logit)
@@ -94,6 +98,7 @@ class UnboundedRNNMemory(BaseMemory):
         not_a_ment_score = -ment_score
         # print(not_a_ment_score)
         over_ign_score = torch.cat([torch.tensor([0.0]).cuda(), not_a_ment_score], dim=0).cuda()
+        # print(ment_score)
         return coref_new_scores, over_ign_score
 
     def interpret_scores(self, coref_new_scores, overwrite_ign_scores, first_overwrite):
@@ -268,6 +273,6 @@ class UnboundedRNNMemory(BaseMemory):
                             self.cluster_type = torch.cat([self.cluster_type, torch.tensor([event_type]).cuda()], dim=0)
                             self.last_mention_boundary.append(ment_boundary)
 
-        from collections import Counter
-        print(Counter([action[1] for action in gt_actions]))
+        # from collections import Counter
+        # print(Counter([action[1] for action in gt_actions]))
         return type_logit_list, type_list, action_logit_list, action_list, gt_actions

@@ -155,8 +155,10 @@ class UnboundedRNNMemController(BaseController):
 
             if len(action_prob_list) > 0:
                 loss['coref'] = self.calculate_coref_loss(action_prob_list)
+                loss['total'] += loss['coref']
+
                 loss['over'] = self.calculate_over_ign_loss(action_prob_list)
-                loss['total'] += (loss['coref'] + loss['over'])
+                loss['total'] += loss['over']
 
                 if ment_pred_loss is not None:
                     loss['total'] += ment_pred_loss
