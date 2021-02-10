@@ -109,22 +109,21 @@ class UnboundedRNNMemController(BaseController):
 
         scores_tens = torch.stack(scores_list)
         gt_indices = torch.tensor(target_list).cuda()
-
-        # print(gt_indices.shape, scores_tens.shape)
-
-        over_loss = nn.CrossEntropyLoss(reduce='sum')(scores_tens, gt_indices)
+        over_loss = torch.sum(nn.CrossEntropyLoss(reduction='none')(scores_tens, gt_indices))
         return over_loss
 
-    @staticmethod
-    def get_event_subtype_loss(type_logit_list, type_list):
+    # @staticmethod
+    def get_event_subtype_loss(self, type_logit_list, type_list):
         # print(type_logit_list[0])
         type_logit_tens = torch.stack(type_logit_list)
         target = torch.tensor(type_list).cuda()
-        event_subtype_loss = nn.CrossEntropyLoss(reduce='sum')(type_logit_tens, target)
+        weight = torch.ones(type_logit_tens.shape[1]).cuda()
+        weight[-1] = self.event_subtype_loss_wt
+        event_subtype_loss = torch.sum(nn.CrossEntropyLoss(reduction='none', weight=weight)(type_logit_tens, target))
 
         return event_subtype_loss
 
-    def forward(self, example, teacher_forcing=False, random_threshold=1.0):
+    def forward(self, example, teacher_forcing=False):
         """
         Encode a batch of excerpts.
         """
@@ -145,20 +144,18 @@ class UnboundedRNNMemController(BaseController):
 
         type_logit_list, type_list, action_prob_list, action_list, gt_actions = self.memory_net(
             example, mention_emb_list, local_emb_list, mention_score_list, pred_mentions, mention_to_cluster,
-            rand_fl_list, teacher_forcing=teacher_forcing, random_threshold=random_threshold)
+            rand_fl_list, teacher_forcing=teacher_forcing)
 
         coref_loss = 0.0
         loss = {'total': 0}
         if follow_gt:
             loss['event_subtype'] = self.get_event_subtype_loss(type_logit_list, type_list)
-            loss['total'] += loss['event_subtype'] * self.event_subtype_loss_wt
+            loss['total'] += loss['event_subtype']
 
             if len(action_prob_list) > 0:
                 loss['coref'] = self.calculate_coref_loss(action_prob_list)
-                loss['total'] += loss['coref']
-
                 loss['over'] = self.calculate_over_ign_loss(action_prob_list)
-                loss['total'] += loss['over']
+                loss['total'] += (loss['coref'] + loss['over'])
 
                 if ment_pred_loss is not None:
                     loss['total'] += ment_pred_loss

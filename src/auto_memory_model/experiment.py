@@ -154,7 +154,6 @@ class Experiment:
             return
 
         for epoch in range(epochs_done, max_epochs):
-            random_threshold = max(0.5, 1.0 - (epoch + 1)/max_epochs)
             logger.info("\n\nStart Epoch %d" % (epoch + 1))
             start_time = time.time()
             # Setup training
@@ -163,11 +162,11 @@ class Experiment:
             for cur_example in self.train_examples:
                 def handle_example(example):
                     self.train_info['global_steps'] += 1
-                    output = model(deepcopy(example), random_threshold=random_threshold)
+                    output = model(deepcopy(example))
                     if output is None:
                         return None
                     loss = output[0]
-                    # print(loss)
+
                     total_loss = loss['total']
                     if isinstance(total_loss, float):
                         print(f"Weird thing - {total_loss}")
@@ -222,11 +221,7 @@ class Experiment:
                 self.save_model(self.best_model_path, model_type='best')
 
             # Save last model - but don't do it too frequently (saves time)
-            if self.slurm_id:
-                if self.train_info['epoch'] % 10 == 0:
-                    self.save_model(self.model_path)
-            # else:
-            #     self.save_model(self.model_path)
+            # if self.train_info['epoch'] % 10 == 0:
 
             # Get elapsed time
             elapsed_time = time.time() - start_time
@@ -234,7 +229,10 @@ class Experiment:
                         % (epoch + 1, fscore, self.train_info['val_perf'], elapsed_time))
 
             if self.train_info['num_stuck_epochs'] >= NUM_STUCK_EPOCHS:
-                return
+                break
+
+        # Save the final model
+        self.save_model(self.model_path)
 
     def eval_model(self, split='dev'):
         """Eval model"""

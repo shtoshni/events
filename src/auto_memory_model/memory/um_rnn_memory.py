@@ -10,7 +10,7 @@ class UnboundedRNNMemory(BaseMemory):
     def __init__(self, rnn_size=50, **kwargs):
         super(UnboundedRNNMemory, self).__init__(**kwargs)
         if self.use_mem_context:
-            vec_size = self.mem_size
+            vec_size = self.emb_size
         else:
             vec_size = 0
 
@@ -21,11 +21,12 @@ class UnboundedRNNMemory(BaseMemory):
         self.rnn_size = rnn_size
         self.proj_layer = MLP(vec_size + self.hsize + 2 * self.emb_size + 1, self.mlp_size, rnn_size)
         self.event_subtype_rnn = torch.nn.GRUCell(hidden_size=rnn_size, input_size=self.emb_size)
-        self.event_subtype_proj = nn.Linear(rnn_size, self.emb_size)
-        # self.event_subtype_repr = nn.Embedding(len(EVENT_SUBTYPES), self.emb_size)
+        self.event_subtype_proj = nn.Linear(rnn_size, len(EVENT_SUBTYPES) + 1)
+        self.valid_mention_mlp = MLP(self.mem_size, self.mlp_size, 1, num_hidden_layers=self.mlp_depth,
+                                     bias=True, drop_module=self.drop_module)
+        self.subtype_eos_id = len(EVENT_SUBTYPES)
 
         self.sim_softmax = nn.Softmax(dim=0)
-        self.eos_event_id = len(EVENT_SUBTYPES)
 
     def initialize_memory(self):
         """Initialize the memory to null with only 1 memory cell to begin with."""
@@ -45,7 +46,7 @@ class UnboundedRNNMemory(BaseMemory):
         pair_score = torch.squeeze(self.mem_sim_mlp(pair_vec), dim=-1)
 
         pair_sim = torch.unsqueeze(self.sim_softmax(pair_score), dim=1)
-        sim_vec = torch.sum(pair_sim * self.mem_vectors, dim=0)
+        sim_vec = torch.sum(pair_sim * self.mem_vectors[:, -self.emb_size:], dim=0)
         return sim_vec
 
     def predict_event_types(self, ment_emb, mem_context, metadata_embs, span_score, gt_event_subtypes, follow_gt):
@@ -58,7 +59,7 @@ class UnboundedRNNMemory(BaseMemory):
         input_state = torch.zeros(1, self.emb_size).cuda()
 
         if follow_gt and len(gt_event_subtypes) < 3:
-            gt_event_subtypes = gt_event_subtypes + [self.eos_event_id]
+            gt_event_subtypes = gt_event_subtypes + [self.subtype_eos_id]
 
         logit_list = []
         all_pred_event_subtype_list = []
@@ -66,10 +67,6 @@ class UnboundedRNNMemory(BaseMemory):
         for i in range(3):
             hidden_state = self.event_subtype_rnn(input_state, hidden_state)
             event_subtype_logit = self.event_subtype_proj(torch.squeeze(hidden_state, dim=0))
-            event_subtype_logit = torch.cat([
-                torch.sum(self.event_subtype_embeddings.weight * event_subtype_logit, dim=1),
-                torch.tensor([0.0]).cuda()], dim=0
-            )
             pred_event_subtype = torch.argmax(event_subtype_logit).item()
 
             logit_list.append(event_subtype_logit)
@@ -78,12 +75,12 @@ class UnboundedRNNMemory(BaseMemory):
 
             if follow_gt:
                 gt_event_subtype = gt_event_subtypes[i]
-                if gt_event_subtype != self.eos_event_id:
+                if gt_event_subtype != self.subtype_eos_id:
                     input_state = self.event_subtype_embeddings(torch.tensor([gt_event_subtype]).long().cuda())
                 else:
                     break
             else:
-                if pred_event_subtype != self.eos_event_id:
+                if pred_event_subtype != self.subtype_eos_id:
                     input_state = self.event_subtype_embeddings(torch.tensor([pred_event_subtype]).long().cuda())
                 else:
                     break
@@ -95,10 +92,10 @@ class UnboundedRNNMemory(BaseMemory):
             ment_boundary, query_vector, local_emb, ment_type, ment_score, feature_embs)
 
         # Negate the mention score
+        # not_a_ment_score = -ment_score
         not_a_ment_score = -ment_score
-        # print(not_a_ment_score)
+
         over_ign_score = torch.cat([torch.tensor([0.0]).cuda(), not_a_ment_score], dim=0).cuda()
-        # print(ment_score)
         return coref_new_scores, over_ign_score
 
     def interpret_scores(self, coref_new_scores, overwrite_ign_scores, first_overwrite):
@@ -125,7 +122,7 @@ class UnboundedRNNMemory(BaseMemory):
             raise NotImplementedError
 
     def forward(self, example, mention_emb_list, local_emb_list, mention_scores, pred_mentions,
-                mention_to_cluster, rand_fl_list, teacher_forcing=False, random_threshold=1.0):
+                mention_to_cluster, rand_fl_list, teacher_forcing=False):
         # Initialize memory
         self.initialize_memory()
 
@@ -156,123 +153,142 @@ class UnboundedRNNMemory(BaseMemory):
 
             invalid_span = ment_boundary not in mention_to_cluster
 
-            if not (follow_gt and invalid_span and rand_fl_list[ment_idx] > self.sample_invalid):
+            # if not (follow_gt and invalid_span and rand_fl_list[ment_idx] > self.sample_invalid):
                 # This part of the code executes in the following cases:
                 # (a) Inference
                 # (b) Training and the mention is not an invalid or
                 # (c) Training and mention is an invalid mention and randomly sampled float is less than invalid
                 # sampling probability
-                mem_context = None
-                if self.use_mem_context:
-                    mem_context = self.get_mem_context(raw_ment_emb, feature_embs)
+            mem_context = None
+            if self.use_mem_context:
+                mem_context = self.get_mem_context(raw_ment_emb, feature_embs)
 
-                gt_event_subtypes = {}
-                if not invalid_span:
-                    for (ment_type, ment_cluster) in mention_to_cluster[ment_boundary]:
-                        gt_event_subtypes[ment_type] = ment_cluster
+            gt_event_subtypes = {}
+            if not invalid_span:
+                for (ment_type, ment_cluster) in mention_to_cluster[ment_boundary]:
+                    gt_event_subtypes[ment_type] = ment_cluster
 
-                gt_event_subtypes_list = sorted(list(gt_event_subtypes.keys()))
+                # print(gt_event_subtypes)
 
-                import random
-                use_gt_list = (follow_gt and random.random() < random_threshold)
+            gt_event_subtypes_list = sorted(list(gt_event_subtypes.keys()))
+            logit_list, all_pred_event_subtype_list, gt_event_subtypes_list = self.predict_event_types(
+                raw_ment_emb, mem_context, metadata_embs, span_score,
+                gt_event_subtypes_list, follow_gt)
 
-                logit_list, all_pred_event_subtype_list, gt_event_subtypes_list = self.predict_event_types(
-                    raw_ment_emb, mem_context, metadata_embs, span_score,
-                    gt_event_subtypes_list, use_gt_list)
+            # print(all_pred_event_subtype_list)
+            type_logit_list.extend(logit_list)
+            type_list.extend(gt_event_subtypes_list)
+
+            if follow_gt: #and :
+                if self.subtype_eos_id in gt_event_subtypes_list:
+                    if rand_fl_list[ment_idx] < self.sample_invalid:
+                        scores, indices = torch.topk(logit_list[-1], 5, dim=0)
+                        indices = indices.tolist()
+                        for noisy_subtype in indices:
+                            if noisy_subtype in gt_event_subtypes_list:
+                                continue
+                            else:
+                                # Replace the last EOS subtype span - Choose a good other event subtype
+                                # This should help with preparing for invalid spans
+                                gt_event_subtypes_list[-1] = noisy_subtype
+                                break
+                    else:
+                        gt_event_subtypes_list.remove(self.subtype_eos_id)
+
+                event_subtype_list = sorted(list(set(gt_event_subtypes_list)))
+            else:
+                if self.subtype_eos_id in all_pred_event_subtype_list:
+                    all_pred_event_subtype_list.remove(self.subtype_eos_id)
 
                 all_pred_event_subtype_list = sorted(list(set(all_pred_event_subtype_list)))
-                if use_gt_list:
-                    event_subtype_list = gt_event_subtypes_list
-                    # print(all_pred_event_subtype_list)
-                    type_logit_list.extend(logit_list)
-                    type_list.extend(gt_event_subtypes_list)
+                event_subtype_list = all_pred_event_subtype_list
+
+            for subtype_idx, event_subtype in enumerate(event_subtype_list):
+                # print(event_subtype, gt_cell_idx, gt_action_str)
+                # ment_score = torch.unsqueeze(logit_list[subtype_idx][event_subtype] -
+                #                              logit_list[subtype_idx][self.subtype_eos_id], dim=0)
+                event_type = get_event_type(event_subtype)
+                feature_embs = self.get_feature_embs(ment_idx, sent_idx, metadata)
+                ment_emb = torch.cat([
+                    raw_ment_emb, self.event_subtype_embeddings(torch.tensor(event_subtype).long().cuda())])
+                ment_score = self.valid_mention_mlp(ment_emb)
+                coref_new_scores, overwrite_ign_scores = self.predict_action(
+                    ment_boundary, ment_emb, local_emb, event_subtype, ment_score, feature_embs)
+
+                pred_cell_idx, pred_action_str = self.interpret_scores(
+                    coref_new_scores, overwrite_ign_scores, first_overwrite)
+
+                if event_subtype in gt_event_subtypes:
+                    ment_cluster = gt_event_subtypes[event_subtype]
+                    if ment_cluster in cluster_to_cell:
+                        gt_cell_idx = cluster_to_cell[ment_cluster]
+                        gt_action_str = 'c'
+                    else:
+                        cluster_to_cell[ment_cluster] = cell_counter
+                        gt_cell_idx = cell_counter
+                        gt_action_str = 'o'
+                        cell_counter += 1
                 else:
-                    event_subtype_list = all_pred_event_subtype_list
-                    # print("Using predicted subtypes")
+                    gt_cell_idx = -1
+                    gt_action_str = 'i'
 
-                if self.eos_event_id in event_subtype_list:
-                    # Check if EOS symbol i.e.
-                    event_subtype_list.remove(self.eos_event_id)
+                if follow_gt:
+                    # Training - Operate over the ground truth
+                    action_str = gt_action_str
+                    cell_idx = gt_cell_idx
+                else:
+                    # Inference time
+                    action_str = pred_action_str
+                    cell_idx = pred_cell_idx
 
-                for subtype_idx, event_subtype in enumerate(event_subtype_list):
-                    ment_score = torch.unsqueeze(logit_list[subtype_idx][event_subtype], dim=0)
-                    event_type = get_event_type(event_subtype)
-                    feature_embs = self.get_feature_embs(ment_idx, sent_idx, metadata)
-                    ment_emb = torch.cat([
-                        raw_ment_emb, self.event_subtype_embeddings(torch.tensor(event_subtype).long().cuda())])
-                    coref_new_scores, overwrite_ign_scores = self.predict_action(
-                        ment_boundary, ment_emb, local_emb, event_subtype, ment_score, feature_embs)
+                # print(gt_cell_idx, gt_action_str, event_subtype, gt_event_subtypes)
+                action_logit_list.append((
+                    coref_new_scores, overwrite_ign_scores, gt_cell_idx, gt_action_str))
 
-                    pred_cell_idx, pred_action_str = self.interpret_scores(
-                        coref_new_scores, overwrite_ign_scores, first_overwrite)
+                gt_actions.append([gt_cell_idx, gt_action_str, (span_start, span_end, event_subtype)])
 
-                    if event_subtype in gt_event_subtypes:
-                        ment_cluster = gt_event_subtypes[event_subtype]
-                        if ment_cluster in cluster_to_cell:
-                            gt_cell_idx = cluster_to_cell[ment_cluster]
-                            gt_action_str = 'c'
-                        else:
-                            cluster_to_cell[ment_cluster] = cell_counter
-                            gt_cell_idx = cell_counter
-                            gt_action_str = 'o'
-                            cell_counter += 1
-                    else:
-                        gt_cell_idx = -1
-                        gt_action_str = 'i'
+                # print(pred_cell_idx, pred_action_str, gt_action_str, gt_cell_idx)
+                last_action_str = action_str
+                action_list.append((pred_cell_idx, pred_action_str, (span_start, span_end, event_subtype)))
 
-                    if follow_gt:
-                        # Training - Operate over the ground truth
-                        action_str = gt_action_str
-                        cell_idx = gt_cell_idx
-                    else:
-                        # Inference time
-                        action_str = pred_action_str
-                        cell_idx = pred_cell_idx
+                if first_overwrite and action_str == 'o':
+                    first_overwrite = False
+                    # We start with a single empty memory cell
+                    self.mem_vectors = torch.unsqueeze(ment_emb, dim=0)
+                    self.ent_counter = torch.tensor([1.0]).cuda()
+                    self.last_mention_idx[0] = ment_idx
+                    self.last_sent_idx[0] = sent_idx
+                    self.cluster_type[0] = event_type
+                    self.last_mention_boundary.append(ment_boundary)
+                else:
+                    num_ents = self.mem_vectors.shape[0]
+                    # Update the memory
+                    cell_mask = (torch.arange(0, num_ents) == cell_idx).float().cuda()
+                    mask = torch.unsqueeze(cell_mask, dim=1)
+                    mask = mask.repeat(1, self.mem_size)
 
-                    # print(gt_cell_idx, gt_action_str, event_subtype, gt_event_subtypes)
-                    action_logit_list.append((
-                        coref_new_scores, overwrite_ign_scores, gt_cell_idx, gt_action_str))
+                    if action_str == 'c':
+                        self.coref_update(ment_emb, local_emb, cell_idx, mask)
+                        self.ent_counter = self.ent_counter + cell_mask
+                        self.last_mention_idx[cell_idx] = ment_idx
+                        self.last_sent_idx[cell_idx] = sent_idx
+                        self.last_mention_boundary[cell_idx] = ment_boundary
 
-                    gt_actions.append([gt_cell_idx, gt_action_str, (span_start, span_end, event_subtype)])
-
-                    # print(pred_cell_idx, pred_action_str, gt_action_str, gt_cell_idx)
-                    last_action_str = action_str
-                    action_list.append((pred_cell_idx, pred_action_str, (span_start, span_end, event_subtype)))
-
-                    if first_overwrite and action_str == 'o':
-                        first_overwrite = False
-                        # We start with a single empty memory cell
-                        self.mem_vectors = torch.unsqueeze(ment_emb, dim=0)
-                        self.ent_counter = torch.tensor([1.0]).cuda()
-                        self.last_mention_idx[0] = ment_idx
-                        self.last_sent_idx[0] = sent_idx
-                        self.cluster_type[0] = event_type
+                        if self.use_ment_type:
+                            assert (event_type == self.cluster_type[cell_idx])
+                    elif action_str == 'o':
+                        # Append the new vector
+                        self.mem_vectors = torch.cat([self.mem_vectors, torch.unsqueeze(ment_emb, dim=0)], dim=0)
+                        self.ent_counter = torch.cat([self.ent_counter, torch.tensor([1.0]).cuda()], dim=0)
+                        self.last_mention_idx = torch.cat([self.last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
+                        self.last_sent_idx = torch.cat([self.last_sent_idx, torch.tensor([sent_idx]).cuda()], dim=0)
+                        self.cluster_type = torch.cat([self.cluster_type, torch.tensor([event_type]).cuda()], dim=0)
                         self.last_mention_boundary.append(ment_boundary)
-                    else:
-                        num_ents = self.mem_vectors.shape[0]
-                        # Update the memory
-                        cell_mask = (torch.arange(0, num_ents) == cell_idx).float().cuda()
-                        mask = torch.unsqueeze(cell_mask, dim=1)
-                        mask = mask.repeat(1, self.mem_size)
 
-                        if action_str == 'c':
-                            self.coref_update(ment_emb, local_emb, cell_idx, mask)
-                            self.ent_counter = self.ent_counter + cell_mask
-                            self.last_mention_idx[cell_idx] = ment_idx
-                            self.last_sent_idx[cell_idx] = sent_idx
-                            self.last_mention_boundary[cell_idx] = ment_boundary
-
-                            if self.use_ment_type:
-                                assert (event_type == self.cluster_type[cell_idx])
-                        elif action_str == 'o':
-                            # Append the new vector
-                            self.mem_vectors = torch.cat([self.mem_vectors, torch.unsqueeze(ment_emb, dim=0)], dim=0)
-                            self.ent_counter = torch.cat([self.ent_counter, torch.tensor([1.0]).cuda()], dim=0)
-                            self.last_mention_idx = torch.cat([self.last_mention_idx, torch.tensor([ment_idx]).cuda()], dim=0)
-                            self.last_sent_idx = torch.cat([self.last_sent_idx, torch.tensor([sent_idx]).cuda()], dim=0)
-                            self.cluster_type = torch.cat([self.cluster_type, torch.tensor([event_type]).cuda()], dim=0)
-                            self.last_mention_boundary.append(ment_boundary)
-
+        # print(gt_actions)
         # from collections import Counter
-        # print(Counter([action[1] for action in gt_actions]))
+        # import random
+        # action_counter = Counter([action[1] for action in gt_actions])
+        # if random.random() < 0.2:
+        #     print(action_counter)
         return type_logit_list, type_list, action_logit_list, action_list, gt_actions

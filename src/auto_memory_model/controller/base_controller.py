@@ -154,7 +154,8 @@ class BaseController(nn.Module):
             mention_loss = self.mention_loss_fn(mention_logits, filt_gold_mentions)
             total_weight = filt_cand_starts.shape[0]
 
-            ment_pred_loss = mention_loss / total_weight
+            # ment_pred_loss = mention_loss / total_weight
+            ment_pred_loss = mention_loss
 
         return ment_pred_loss, mention_logits
 

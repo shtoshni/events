@@ -167,7 +167,7 @@ class BaseMemory(nn.Module):
                               feature_embs], dim=-1)
         pair_score = self.mem_coref_mlp(pair_vec)
 
-        coref_score = torch.squeeze(pair_score, dim=-1) # + ment_score  # M
+        coref_score = torch.squeeze(pair_score, dim=-1) + ment_score  # M
 
         # Event type used for coreference mask
         coref_new_mask = torch.cat([self.get_coref_mask(ment_boundary, event_type), torch.tensor([1.0]).cuda()], dim=0)
